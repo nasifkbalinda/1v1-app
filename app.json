@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "1v1",
+    "name": "V-Stream",
     "slug": "1v1-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -26,7 +26,9 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "name": "V-Stream | Movies & TV",
+      "shortName": "V-Stream"
     },
     "plugins": [
       "expo-router",
