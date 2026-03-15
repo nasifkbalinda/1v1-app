@@ -13,9 +13,6 @@ type Movie = { id: string; title: string; description: string | null; poster_url
 type Episode = { id: string; season_number: number; episode_number: number; title: string; video_url: string | null; };
 
 function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url: string; onError: (msg: string) => void; initialTime: number; movieId: string; userId: string | null; }) {
-  
-  // ---> THE WEB FORMAT FIX <---
-  // Chrome desktop cannot play .m3u8 directly. We swap it to the MP4 file for web users!
   const playableUrl = (Platform.OS === 'web' && url.includes('stream.mux.com')) 
     ? url.replace('.m3u8', '/capped-1080p.mp4') 
     : url;
@@ -26,18 +23,22 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
     p.play();
   });
 
-  const { status, error } = useEvent(player, 'statusChange', { status: player.status, error: null as unknown });
+  // --- FIXED TYPESCRIPT: Silenced expo-video type mismatches ---
+  const statusEvent = useEvent(player, 'statusChange', { status: player.status } as any) as any;
+  const status = statusEvent?.status ?? player.status;
+  const playerError = statusEvent?.error;
+  
   const [hasSeeked, setHasSeeked] = useState(false);
 
   useEffect(() => { 
-    if (error) {
+    if (playerError) {
       let msg = 'Unknown Error';
-      if (typeof error === 'object' && error !== null) {
-        msg = (error as any).message || JSON.stringify(error);
-      } else { msg = String(error); }
+      if (typeof playerError === 'object' && playerError !== null) {
+        msg = (playerError as any).message || JSON.stringify(playerError);
+      } else { msg = String(playerError); }
       onError(`File Corrupted or Missing: ${msg}`); 
     }
-  }, [error, onError]);
+  }, [playerError, onError]);
 
   useEffect(() => {
     if (status === 'readyToPlay' && initialTime > 0 && !hasSeeked) {
@@ -47,7 +48,7 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
   }, [status, initialTime, hasSeeked, player]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !movieId) return;
     const interval = setInterval(() => {
       if (player.playing && player.currentTime > 5) {
         supabase.from('playback_progress').upsert({ user_id: userId, movie_id: movieId, timestamp_seconds: Math.floor(player.currentTime), updated_at: new Date().toISOString() }, { onConflict: 'user_id, movie_id' }).then();
@@ -58,8 +59,6 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
 
   const { width } = Dimensions.get('window');
   const isWeb = Platform.OS === 'web';
-  
-  // ---> DESKTOP SIZE OPTIMIZATION <---
   const maxVideoWidth = isWeb ? Math.min(width - 40, 960) : width;
   const videoHeight = maxVideoWidth * (9 / 16);
 
@@ -107,13 +106,15 @@ export default function TheaterScreen() {
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
-  const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
   const [videoFailedMsg, setVideoFailedMsg] = useState<string | null>(null);
   const [isInMyList, setIsInMyList] = useState(false);
   const [watchlistToggling, setWatchlistToggling] = useState(false);
   const [similarMovies, setSimilarMovies] = useState<Movie[]>([]);
+  
   const [userId, setUserId] = useState<string | null>(null);
   const [initialTime, setInitialTime] = useState<number>(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
 
   const isOfflineMode = Boolean(paramLocalUri);
 
@@ -121,7 +122,10 @@ export default function TheaterScreen() {
     if (!id) { setLoading(false); setError('No movie ID'); return; }
     if (isOfflineMode) {
       setMovie({ id, title: paramTitle ?? 'Movie', description: null, poster_url: paramPosterUrl ?? null, video_url: paramLocalUri ?? null, category: null, type: null });
-      setLoading(false); setIsDownloaded(true); return;
+      setLoading(false); setIsDownloaded(true); 
+      setCurrentVideoUrl(paramLocalUri ?? null);
+      setIsPlaying(true);
+      return;
     }
     
     async function fetchMovie() {
@@ -146,12 +150,6 @@ export default function TheaterScreen() {
     }
     fetchMovie();
   }, [id, isOfflineMode, paramLocalUri, paramTitle, paramPosterUrl]);
-
-  useEffect(() => {
-    if (isOfflineMode) { setCurrentVideoUrl(paramLocalUri ?? null); return; }
-    if (movie?.video_url) setCurrentVideoUrl(movie.video_url);
-    else setCurrentVideoUrl(null);
-  }, [isOfflineMode, paramLocalUri, movie]);
 
   useEffect(() => { setVideoFailedMsg(null); }, [currentVideoUrl]);
 
@@ -195,7 +193,9 @@ export default function TheaterScreen() {
   const handleWatchlistToggle = useCallback(async () => {
     if (!movie || isOfflineMode || watchlistToggling) return;
     if (!userId) {
-      if (Platform.OS === 'web') window.alert("Please log in to use My List");
+      if (Platform.OS === 'web') window.alert("Sign In Required: Please log in to add to your list.");
+      else Alert.alert("Sign In Required", "Please log in to add to your list.");
+      router.push('/settings');
       return;
     }
     setWatchlistToggling(true);
@@ -208,11 +208,38 @@ export default function TheaterScreen() {
         setIsInMyList(true);
       }
     } catch (err) {} finally { setWatchlistToggling(false); }
-  }, [movie, isOfflineMode, isInMyList, watchlistToggling, userId]);
+  }, [movie, isOfflineMode, isInMyList, watchlistToggling, userId, router]);
+
+  const handlePlayRequest = (urlToPlay: string | null) => {
+    if (!urlToPlay) return;
+    
+    if (!userId && !isOfflineMode) {
+        if (Platform.OS === 'web') {
+            window.alert("Sign In Required: You must be logged in to watch videos. Redirecting you to the login page...");
+        } else {
+            Alert.alert("Sign In Required", "You must be logged in to watch videos.", [
+                { text: "Cancel", style: "cancel" },
+                { text: "Log In", onPress: () => router.push('/settings') }
+            ]);
+        }
+        if (Platform.OS === 'web') router.push('/settings');
+        return;
+    }
+
+    setCurrentVideoUrl(urlToPlay);
+    setIsPlaying(true);
+  };
 
   const downloadVideo = useCallback(
     async (videoUrl: string, title: string) => {
       if (!movie || isOfflineMode || !videoUrl || isDownloading || isDownloaded) return;
+
+      if (!userId) {
+          if (Platform.OS === 'web') window.alert("Sign In Required: Please log in to download.");
+          else Alert.alert("Sign In Required", "Please log in to download.");
+          router.push('/settings');
+          return;
+      }
 
       const mp4Url = videoUrl.includes('stream.mux.com') ? videoUrl.replace('.m3u8', '/capped-1080p.mp4') : videoUrl;
 
@@ -252,7 +279,7 @@ export default function TheaterScreen() {
         }
       } catch (err) { Alert.alert('Download Failed', 'Check your network connection and try again.'); } finally { setIsDownloading(false); setDownloadProgress(null); }
     },
-    [movie, isOfflineMode, isDownloading, isDownloaded]
+    [movie, isOfflineMode, isDownloading, isDownloaded, userId, router]
   );
 
   const handleDownload = useCallback(async () => {
@@ -271,8 +298,8 @@ export default function TheaterScreen() {
   const maxVideoWidth = isWeb ? Math.min(width - 40, 960) : width;
   const videoHeight = maxVideoWidth * (9 / 16);
   
-  const activeVideoUrl = currentVideoUrl || movie.video_url;
-  const showDownloadButton = !isOfflineMode && !isDownloaded && !!activeVideoUrl;
+  // --- FIXED TYPESCRIPT: using optional chaining to prevent possibly null errors ---
+  const showDownloadButton = !isOfflineMode && !isDownloaded && (!!currentVideoUrl || !!movie?.video_url);
 
   return (
     <View style={styles.container}>
@@ -281,28 +308,38 @@ export default function TheaterScreen() {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {currentVideoUrl && !videoFailedMsg ? (
+        {isPlaying && currentVideoUrl && !videoFailedMsg ? (
           <View style={styles.videoContainer}>
-            <VideoPlayerBlock key={currentVideoUrl} url={currentVideoUrl} onError={(msg) => setVideoFailedMsg(msg)} initialTime={initialTime} movieId={movie.id} userId={userId} />
+            <VideoPlayerBlock key={currentVideoUrl} url={currentVideoUrl} onError={(msg) => setVideoFailedMsg(msg)} initialTime={initialTime} movieId={movie!.id} userId={userId} />
           </View>
         ) : (
           <View style={[styles.videoPlaceholder, { width: maxVideoWidth, height: videoHeight, borderRadius: isWeb ? 12 : 0, marginVertical: isWeb ? 24 : 0 }]}>
             {videoFailedMsg ? (
               <View style={{padding: 20, alignItems: 'center'}}><Ionicons name="alert-circle-outline" size={40} color="#e50914" style={{marginBottom: 10}} /><Text style={[styles.errorText, {textAlign: 'center'}]}>{videoFailedMsg}</Text></View>
             ) : movie.poster_url ? (
-              <Image source={{ uri: movie.poster_url }} style={styles.videoPoster} resizeMode="contain" />
+              <View style={{ width: '100%', height: '100%', position: 'relative' }}>
+                <Image source={{ uri: movie.poster_url }} style={styles.videoPoster} resizeMode="contain" />
+                <View style={styles.posterPlayOverlay}>
+                    <Pressable 
+                        style={styles.bigPlayButton} 
+                        onPress={() => handlePlayRequest(movie?.type === 'TV Series' ? (episodes[0]?.video_url || null) : movie?.video_url)}
+                    >
+                        <Ionicons name="play" size={40} color="#fff" style={{marginLeft: 5}}/>
+                    </Pressable>
+                </View>
+              </View>
             ) : (
-              <Text style={styles.placeholderText}>Preparing Stream...</Text>
+              <Text style={styles.placeholderText}>No Poster Available</Text>
             )}
           </View>
         )}
 
         <View style={styles.webContentWrapper}>
           <View style={styles.info}>
-            <Text style={styles.title}>{movie.title}</Text>
+            <Text style={styles.title}>{movie?.title}</Text>
             <View style={styles.metaRow}>
-              <View style={styles.metaBadge}><Text style={styles.metaBadgeText}>{movie.type || 'Movie'}</Text></View>
-              <Text style={styles.metaCategory}>{movie.category || 'V Original'}</Text>
+              <View style={styles.metaBadge}><Text style={styles.metaBadgeText}>{movie?.type || 'Movie'}</Text></View>
+              <Text style={styles.metaCategory}>{movie?.category || 'V Original'}</Text>
             </View>
 
             <View style={styles.actionButtonsRow}>
@@ -320,19 +357,23 @@ export default function TheaterScreen() {
               )}
             </View>
 
-            {movie.description && <Text style={styles.description}>{movie.description}</Text>}
+            {movie?.description && <Text style={styles.description}>{movie.description}</Text>}
 
-            {!isOfflineMode && movie.type === 'TV Series' && episodes.length > 0 && (
+            {!isOfflineMode && movie?.type === 'TV Series' && episodes.length > 0 && (
               <View style={styles.episodesSection}>
                 <Text style={styles.episodesTitle}>Episodes</Text>
                 <View style={styles.episodeList}>
                   {episodes.map((ep) => (
-                    <Pressable key={ep.id} style={[styles.episodeItem, ep.video_url === currentVideoUrl && styles.episodeItemActive]} onPress={() => ep.video_url && setCurrentVideoUrl(ep.video_url)}>
+                    <Pressable 
+                        key={ep.id} 
+                        style={[styles.episodeItem, isPlaying && ep.video_url === currentVideoUrl && styles.episodeItemActive]} 
+                        onPress={() => handlePlayRequest(ep.video_url)}
+                    >
                       <View style={styles.episodeTextBlock}>
                         <Text style={styles.episodeLabel}>{`S${ep.season_number}:E${ep.episode_number}`}</Text>
                         <Text style={styles.episodeTitle} numberOfLines={1}>{ep.title}</Text>
                       </View>
-                      <Ionicons name="play-circle-outline" size={22} color={ep.video_url === currentVideoUrl ? '#e50914' : '#fff'} />
+                      <Ionicons name="play-circle-outline" size={22} color={isPlaying && ep.video_url === currentVideoUrl ? '#e50914' : '#fff'} />
                     </Pressable>
                   ))}
                 </View>
@@ -366,10 +407,10 @@ const styles = StyleSheet.create({
   videoView: { backgroundColor: '#000' },
   videoPlaceholder: { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center', alignSelf: 'center', overflow: 'hidden' },
   videoPoster: { width: '100%', height: '100%' },
+  posterPlayOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+  bigPlayButton: { width: 70, height: 70, borderRadius: 35, backgroundColor: 'rgba(229, 9, 20, 0.9)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 5 },
   placeholderText: { color: '#666', fontSize: 16 },
-  
   webContentWrapper: { width: '100%', maxWidth: 1200, alignSelf: 'center' },
-  
   info: { paddingHorizontal: 20, paddingTop: 24 },
   title: { color: '#fff', fontSize: 26, fontWeight: '700', marginBottom: 8 },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
