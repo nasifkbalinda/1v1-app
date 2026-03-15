@@ -109,47 +109,27 @@ export default function AdminScreen() {
     return supabase.storage.from('movies').getPublicUrl(data.path).data.publicUrl;
   };
 
-  // --- REFINED BIG FILE POLLING LOGIC ---
-  const uploadVideoToMux = async (fileObj: any, taskId: string, subtitleUrl?: string | null): Promise<string> => {
+  // --- UPGRADED WEBHOOK UPLOADER ---
+  const uploadVideoToMux = async (fileObj: any, taskId: string, subtitleUrl?: string | null, passthrough?: string): Promise<void> => {
     let blob = fileObj.file;
     if (!blob) { const response = await fetch(fileObj.uri); blob = await response.blob(); }
-    const backendRes = await fetch('/api/mux', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subtitleUrl }) });
+    
+    // We send the passthrough nametag to our backend
+    const backendRes = await fetch('/api/mux', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subtitleUrl, passthrough }) });
     const muxUpload = await backendRes.json();
     if (!muxUpload.data) throw new Error(`Backend Error`);
-    const { url: uploadUrl, id: uploadId } = muxUpload.data;
+    const { url: uploadUrl } = muxUpload.data;
     
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', uploadUrl);
       xhr.upload.onprogress = (event) => { if (event.lengthComputable) updateTask(taskId, { progress: Math.round((event.loaded / event.total) * 100) }); };
       
-      xhr.onload = async () => {
+      xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
-          updateTask(taskId, { status: 'processing', progress: 100 });
-          
-          let playbackId = null;
-          let attempts = 0;
-          const MAX_ATTEMPTS = 400; // 400 attempts * 3 seconds = 20 minutes max wait time
-          
-          while (!playbackId && attempts < MAX_ATTEMPTS) {
-            await new Promise(r => setTimeout(r, 3000));
-            try {
-              const checkRes = await fetch(`/api/mux?uploadId=${uploadId}`);
-              if (checkRes.ok) {
-                  const checkData = await checkRes.json();
-                  if (checkData.playbackId) playbackId = checkData.playbackId;
-              }
-            } catch (err) {
-              console.log("Polling network blip, retrying...");
-            }
-            attempts++;
-          }
-          
-          if (!playbackId) {
-              reject(new Error("Mux processing took too long. The video is in Mux, but you must add it manually to Supabase."));
-              return;
-          }
-          resolve(`https://stream.mux.com/${playbackId}.m3u8`);
+          // As soon as the raw upload hits 100%, we are done! No more waiting for processing.
+          updateTask(taskId, { status: 'done', progress: 100 });
+          resolve();
         } else { reject(new Error(`Upload failed`)); }
       };
       
@@ -175,11 +155,24 @@ export default function AdminScreen() {
     try {
       const timestamp = Date.now();
       const safeSlug = title.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
+      
       let subUrl = null;
       if (subtitle) subUrl = await uploadFile(subtitle, `subtitles/${timestamp}-${safeSlug}.vtt`, 'text/vtt');
-      const [posterUrl, videoUrl] = await Promise.all([ uploadFile(poster, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg'), uploadVideoToMux(video, taskId, subUrl) ]);
-      await supabase.from('movies').insert({ title, description: desc || null, poster_url: posterUrl, video_url: videoUrl, type: 'Movie', category: cat, status: 'active' });
-      updateTask(taskId, { status: 'done' });
+      const posterUrl = await uploadFile(poster, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
+
+      // 1. Create the row in Supabase FIRST to get the ID
+      const { data, error } = await supabase
+        .from('movies')
+        .insert({ title, description: desc || null, poster_url: posterUrl, type: 'Movie', category: cat, status: 'processing' })
+        .select('id')
+        .single();
+        
+      if (error) throw error;
+      const movieId = data.id;
+
+      // 2. Upload to Mux with the secret nametag (e.g., "movies:123")
+      await uploadVideoToMux(video, taskId, subUrl, `movies:${movieId}`);
+      
     } catch (e: any) { updateTask(taskId, { status: 'error', message: e.message }); }
   };
 
@@ -210,11 +203,23 @@ export default function AdminScreen() {
     try {
       const timestamp = Date.now();
       const safeSlug = epTitle.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
+      
       let subUrl = null;
       if (subtitle) subUrl = await uploadFile(subtitle, `subtitles/${timestamp}-${safeSlug}.vtt`, 'text/vtt');
-      const videoUrl = await uploadVideoToMux(video, taskId, subUrl);
-      await supabase.from('episodes').insert({ movie_id: seriesId, season_number: seasonNum, episode_number: episodeNum, title: epTitle, video_url: videoUrl });
-      updateTask(taskId, { status: 'done' });
+
+      // 1. Create the episode row FIRST
+      const { data, error } = await supabase
+        .from('episodes')
+        .insert({ movie_id: seriesId, season_number: seasonNum, episode_number: episodeNum, title: epTitle })
+        .select('id')
+        .single();
+        
+      if (error) throw error;
+      const episodeId = data.id;
+
+      // 2. Upload to Mux with the secret nametag
+      await uploadVideoToMux(video, taskId, subUrl, `episodes:${episodeId}`);
+      
     } catch (e: any) { updateTask(taskId, { status: 'error', message: e.message }); }
   };
 
@@ -437,8 +442,7 @@ export default function AdminScreen() {
                   <View key={task.id} style={styles.taskCard}>
                     <View style={styles.taskHeader}><Text style={styles.taskTitle}>{task.title}</Text>{(task.status==='done'||task.status==='error') && <Pressable onPress={()=>removeTask(task.id)}><Ionicons name="close" size={20} color="#888"/></Pressable>}</View>
                     {task.status==='uploading' && <View style={styles.taskProgressRow}><View style={styles.taskProgressBarBg}><View style={[styles.taskProgressBarFill, {width:`${task.progress}%`}]}/></View><Text style={styles.taskProgressText}>{task.progress}%</Text></View>}
-                    {task.status==='processing' && <Text style={styles.taskProcessingText}>Processing...</Text>}
-                    {task.status==='done' && <Text style={styles.taskSuccessText}>Done!</Text>}
+                    {task.status==='done' && <Text style={styles.taskSuccessText}>Upload complete! You can safely close this tab.</Text>}
                     {task.status==='error' && <Text style={styles.taskErrorText}>{task.message}</Text>}
                   </View>
                 ))}
@@ -535,7 +539,7 @@ export default function AdminScreen() {
 
             {manageLoading ? <ActivityIndicator color="#e50914" /> : (
               trashedMovies.length === 0 ? <Text style={styles.label}>Trash is empty.</Text> :
-              trashedMovies.map(m => (
+              trashed.length === 0 ? null : trashedMovies.map(m => (
                 <View key={m.id} style={styles.manageItem}>
                   <Pressable style={styles.checkboxZone} onPress={() => toggleTrashSelection(m.id)}>
                     <Ionicons name={selectedTrashIds.includes(m.id) ? "checkbox" : "square-outline"} size={22} color={selectedTrashIds.includes(m.id) ? "#e50914" : "#666"} />
