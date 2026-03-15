@@ -109,6 +109,7 @@ export default function AdminScreen() {
     return supabase.storage.from('movies').getPublicUrl(data.path).data.publicUrl;
   };
 
+  // --- REFINED BIG FILE POLLING LOGIC ---
   const uploadVideoToMux = async (fileObj: any, taskId: string, subtitleUrl?: string | null): Promise<string> => {
     let blob = fileObj.file;
     if (!blob) { const response = await fetch(fileObj.uri); blob = await response.blob(); }
@@ -116,23 +117,43 @@ export default function AdminScreen() {
     const muxUpload = await backendRes.json();
     if (!muxUpload.data) throw new Error(`Backend Error`);
     const { url: uploadUrl, id: uploadId } = muxUpload.data;
+    
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', uploadUrl);
       xhr.upload.onprogress = (event) => { if (event.lengthComputable) updateTask(taskId, { progress: Math.round((event.loaded / event.total) * 100) }); };
+      
       xhr.onload = async () => {
         if (xhr.status >= 200 && xhr.status < 300) {
           updateTask(taskId, { status: 'processing', progress: 100 });
+          
           let playbackId = null;
-          while (!playbackId) {
+          let attempts = 0;
+          const MAX_ATTEMPTS = 400; // 400 attempts * 3 seconds = 20 minutes max wait time
+          
+          while (!playbackId && attempts < MAX_ATTEMPTS) {
             await new Promise(r => setTimeout(r, 3000));
-            const checkRes = await fetch(`/api/mux?uploadId=${uploadId}`);
-            const checkData = await checkRes.json();
-            if (checkData.playbackId) playbackId = checkData.playbackId;
+            try {
+              const checkRes = await fetch(`/api/mux?uploadId=${uploadId}`);
+              if (checkRes.ok) {
+                  const checkData = await checkRes.json();
+                  if (checkData.playbackId) playbackId = checkData.playbackId;
+              }
+            } catch (err) {
+              console.log("Polling network blip, retrying...");
+            }
+            attempts++;
+          }
+          
+          if (!playbackId) {
+              reject(new Error("Mux processing took too long. The video is in Mux, but you must add it manually to Supabase."));
+              return;
           }
           resolve(`https://stream.mux.com/${playbackId}.m3u8`);
         } else { reject(new Error(`Upload failed`)); }
       };
+      
+      xhr.onerror = () => reject(new Error(`Network error during upload`));
       xhr.send(blob);
     });
   };
