@@ -11,7 +11,8 @@ const POSTER_HEIGHT = 160;
 const FEATURED_WIDTH = 380;
 const FEATURED_HEIGHT = 220;
 
-type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; duration_seconds?: number | null; };
+// Added "views" to the Movie type so our app knows how to read the new database column!
+type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; duration_seconds?: number | null; views?: number; };
 const FILTERS = ['All', 'Movies', 'TV Shows', 'Action', 'Comedy', 'Adventure', 'Sci-Fi'] as const;
 type Filter = (typeof FILTERS)[number];
 
@@ -25,7 +26,6 @@ export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   
-  // ---> NEW: SCREEN WIDTH LISTENER <---
   const { width } = useWindowDimensions();
   const isDesktop = width > 768;
 
@@ -47,7 +47,6 @@ export default function HomeScreen() {
       if (isInitial) setLoading(true);
       else setMoviesRefreshing(true);
       const baseQuery = supabase.from('movies').select('*').eq('status', 'active');
-      // This order('id', false) ensures the newest uploads are ALWAYS first in the array!
       const filteredQuery = applyActiveFilterToMoviesQuery(baseQuery, activeFilter).order('id', { ascending: false }); 
       const { data, error } = await filteredQuery;
       if (error) throw error;
@@ -69,6 +68,14 @@ export default function HomeScreen() {
   // Featured gets the absolute top 4 newest
   const featuredRowMovies = filteredMovies.slice(0, 4);
   
+  // ---> NEW: TRENDING MOVIES (Sorted by highest views) <---
+  const trendingMovies = useMemo(() => {
+    // We make a copy of the array and sort it by the new views column, keeping the top 10
+    return [...filteredMovies]
+      .sort((a, b) => (b.views || 0) - (a.views || 0))
+      .slice(0, 10);
+  }, [filteredMovies]);
+
   // Latest Uploads gets the top 12 newest
   const latestUploadsMovies = filteredMovies.slice(0, 12);
   
@@ -99,7 +106,6 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       
-      {/* ---> Hide header on Desktop! <--- */}
       {!isDesktop && (
         <View style={[styles.headerFixed, { paddingTop: insets.top + 10 }]}>
           <View style={styles.webContentWrapper}>
@@ -159,7 +165,24 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* --- NEW: LATEST UPLOADS SECTION --- */}
+          {/* --- NEW: TRENDING NOW SECTION --- */}
+          {trendingMovies.length > 0 && !searchQuery.trim() && (
+            <View style={styles.categorySection}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 8 }}>
+                 <Ionicons name="flame" size={24} color="#e50914" />
+                 <Text style={[styles.sectionLabel, { marginBottom: 0 }]}>Trending Now</Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
+                {trendingMovies.map((movie) => (
+                  <Pressable key={`trending-${movie.id}`} style={styles.movieCard} onPress={() => router.push(`/movie/${movie.id}`)}>
+                    <Image source={{ uri: movie.poster_url || '' }} style={styles.moviePoster} resizeMode="cover" />
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* --- LATEST UPLOADS SECTION --- */}
           {latestUploadsMovies.length > 0 && !searchQuery.trim() && (
             <View style={styles.categorySection}>
               <Text style={styles.sectionLabel}>Latest Uploads</Text>
