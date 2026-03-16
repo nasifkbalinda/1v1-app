@@ -47,6 +47,7 @@ export default function HomeScreen() {
       if (isInitial) setLoading(true);
       else setMoviesRefreshing(true);
       const baseQuery = supabase.from('movies').select('*').eq('status', 'active');
+      // This order('id', false) ensures the newest uploads are ALWAYS first in the array!
       const filteredQuery = applyActiveFilterToMoviesQuery(baseQuery, activeFilter).order('id', { ascending: false }); 
       const { data, error } = await filteredQuery;
       if (error) throw error;
@@ -65,7 +66,11 @@ export default function HomeScreen() {
 
   const filteredMovies = useMemo(() => filterByQuery(movies, searchQuery), [movies, searchQuery]);
   
+  // Featured gets the absolute top 4 newest
   const featuredRowMovies = filteredMovies.slice(0, 4);
+  
+  // Latest Uploads gets the top 12 newest
+  const latestUploadsMovies = filteredMovies.slice(0, 12);
   
   const categoryOrder = ['Action', 'Adventure', 'Comedy', 'Drama'];
   const moviesByCategory = useMemo(() => {
@@ -94,7 +99,7 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       
-      {/* ---> THE FIX: Hide this entire header on Desktop! <--- */}
+      {/* ---> Hide header on Desktop! <--- */}
       {!isDesktop && (
         <View style={[styles.headerFixed, { paddingTop: insets.top + 10 }]}>
           <View style={styles.webContentWrapper}>
@@ -122,6 +127,7 @@ export default function HomeScreen() {
             </ScrollView>
           </View>
 
+          {/* --- FEATURED SECTION --- */}
           {featuredRowMovies.length > 0 && !searchQuery.trim() && (
             <View style={styles.categorySection}>
               <Text style={styles.sectionLabel}>Featured</Text>
@@ -153,6 +159,21 @@ export default function HomeScreen() {
             </View>
           )}
 
+          {/* --- NEW: LATEST UPLOADS SECTION --- */}
+          {latestUploadsMovies.length > 0 && !searchQuery.trim() && (
+            <View style={styles.categorySection}>
+              <Text style={styles.sectionLabel}>Latest Uploads</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
+                {latestUploadsMovies.map((movie) => (
+                  <Pressable key={`latest-${movie.id}`} style={styles.movieCard} onPress={() => router.push(`/movie/${movie.id}`)}>
+                    <Image source={{ uri: movie.poster_url || '' }} style={styles.moviePoster} resizeMode="cover" />
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* --- CATEGORY SECTIONS --- */}
           {sortedCategories.map((category) => {
             const categoryMovies = moviesByCategory[category];
             if (!categoryMovies) return null;
@@ -199,15 +220,15 @@ const styles = StyleSheet.create({
   
   categorySection: { marginBottom: 32 },
   sectionLabel: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginBottom: 16 },
-  rowScroll: { paddingRight: 16, alignItems: 'center' },
+  rowScroll: { paddingRight: 16, alignItems: 'center', gap: 12 },
   
-  featuredCard: { width: FEATURED_WIDTH, height: FEATURED_HEIGHT, borderRadius: 8, overflow: 'hidden', marginRight: 12, backgroundColor: '#111', borderWidth: 1, borderColor: '#222', position: 'relative' },
+  featuredCard: { width: FEATURED_WIDTH, height: FEATURED_HEIGHT, borderRadius: 8, overflow: 'hidden', backgroundColor: '#111', borderWidth: 1, borderColor: '#222', position: 'relative' },
   featuredGradient: { ...StyleSheet.absoluteFillObject },
   featuredTextOverlay: { position: 'absolute', bottom: 12, left: 12, right: 12, zIndex: 1, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
   featuredTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold', flex: 1, marginRight: 10 },
   playButtonSmall: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 4, gap: 4 },
   playButtonTextSmall: { color: '#000', fontWeight: 'bold', fontSize: 12 },
   
-  movieCard: { width: POSTER_WIDTH, height: POSTER_HEIGHT, marginRight: 12, borderRadius: 8, overflow: 'hidden', backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#1f1f1f' },
+  movieCard: { width: POSTER_WIDTH, height: POSTER_HEIGHT, borderRadius: 8, overflow: 'hidden', backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#1f1f1f' },
   moviePoster: { width: '100%', height: '100%' },
 });

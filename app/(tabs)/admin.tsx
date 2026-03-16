@@ -15,6 +15,7 @@ type UploadTask = {
   progress: number; 
   status: 'uploading' | 'processing' | 'done' | 'error' | 'step-label'; 
   message?: string; 
+  retryPayload?: any; // <--- This holds the secret backup data
 };
 
 export default function AdminScreen() {
@@ -125,7 +126,6 @@ export default function AdminScreen() {
     
     updateTask(taskId, { message: 'Connecting to Mux backend...' });
 
-    // CHANGED: Now includes the VIP x-admin-secret header
     const backendRes = await fetch('/api/mux', { 
         method: 'POST', 
         headers: { 
@@ -174,9 +174,14 @@ export default function AdminScreen() {
         return;
     }
     const taskId = Date.now().toString();
-    setUploadTasks(prev => [{ id: taskId, title: title, type: 'Movie', progress: 0, status: 'uploading', message: 'Starting...' }, ...prev]);
-    
     const cT = title; const cD = description; const cC = category; const cP = posterFile; const cV = videoFile; const cS = subtitleFile;
+    
+    // Save data secretly for retries
+    setUploadTasks(prev => [{ 
+      id: taskId, title: title, type: 'Movie', progress: 0, status: 'uploading', message: 'Starting...',
+      retryPayload: { cT, cD, cC, cP, cV, cS } 
+    }, ...prev]);
+    
     setTitle(''); setDescription(''); setCategory(null); setPosterFile(null); setVideoFile(null); setSubtitleFile(null);
     runMovieBackground(taskId, cT, cD, cC, cP, cV, cS);
   };
@@ -186,13 +191,11 @@ export default function AdminScreen() {
       const timestamp = Date.now();
       const safeSlug = title.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
       
-      // Step 1: Poster/Subtitles
       updateTask(taskId, { message: 'Uploading Poster Image...' });
       let subUrl = null;
       if (subtitle) subUrl = await uploadFile(subtitle, `subtitles/${timestamp}-${safeSlug}.vtt`, 'text/vtt');
       const posterUrl = await uploadFile(poster, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
 
-      // Step 2: Database Insert
       updateTask(taskId, { message: 'Creating Database Entry...' });
       const { data, error } = await supabase
         .from('movies')
@@ -210,7 +213,6 @@ export default function AdminScreen() {
       if (error) throw new Error(`Database Error: ${error.message}`);
       const movieId = data.id;
 
-      // Step 3: Mux Upload
       await uploadVideoToMux(video, taskId, subUrl, `movies:${movieId}`);
       
     } catch (e: any) { 
@@ -219,37 +221,17 @@ export default function AdminScreen() {
     }
   };
 
-  const handleCreateTVSeries = async () => {
-    if (!title || !category || !posterFile) return;
-    setTvSeriesUploading(true);
-    try {
-      const timestamp = Date.now();
-      const safeSlug = title.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
-      const posterUrl = await uploadFile(posterFile, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
-      const { error } = await supabase.from('movies').insert({ 
-          title, 
-          description: description || null, 
-          poster_url: posterUrl, 
-          type: 'TV Series', 
-          category, 
-          status: 'active' 
-      });
-      if (error) throw error;
-      setTitle(''); setDescription(''); setCategory(null); setPosterFile(null);
-      fetchTvSeries();
-      if (Platform.OS === 'web') window.alert("Series created!");
-    } catch(e: any) { 
-        if (Platform.OS === 'web') window.alert("Error: " + e.message);
-        else Alert.alert("Error", e.message);
-    } finally { setTvSeriesUploading(false); }
-  };
-
   const queueEpisodeUpload = () => {
     if (!selectedSeriesId || !seasonNumber || !episodeNumber || !episodeTitle || !episodeVideoFile) return;
     const taskId = Date.now().toString();
-    setUploadTasks(prev => [{ id: taskId, title: `S${seasonNumber}E${episodeNumber}: ${episodeTitle}`, type: 'Episode', progress: 0, status: 'uploading', message: 'Starting...' }, ...prev]);
-    
     const cSId = selectedSeriesId; const cS = parseInt(seasonNumber); const cE = parseInt(episodeNumber); const cT = episodeTitle; const cV = episodeVideoFile; const cSub = episodeSubtitleFile;
+    
+    // Save data secretly for retries
+    setUploadTasks(prev => [{ 
+      id: taskId, title: `S${seasonNumber}E${episodeNumber}: ${episodeTitle}`, type: 'Episode', progress: 0, status: 'uploading', message: 'Starting...',
+      retryPayload: { cSId, cS, cE, cT, cV, cSub }
+    }, ...prev]);
+    
     setEpisodeTitle(''); setEpisodeNumber(''); setEpisodeVideoFile(null); setEpisodeSubtitleFile(null);
     runEpisodeBackground(taskId, cSId, cS, cE, cT, cV, cSub);
   };
@@ -285,6 +267,43 @@ export default function AdminScreen() {
         console.error(e);
         updateTask(taskId, { status: 'error', message: e.message || 'Unknown Error' }); 
     }
+  };
+
+  // --- RETRY LOGIC ---
+  const handleRetryTask = (task: UploadTask) => {
+    updateTask(task.id, { status: 'uploading', progress: 0, message: 'Retrying...' });
+    if (task.type === 'Movie' && task.retryPayload) {
+      const p = task.retryPayload;
+      runMovieBackground(task.id, p.cT, p.cD, p.cC, p.cP, p.cV, p.cS);
+    } else if (task.type === 'Episode' && task.retryPayload) {
+      const p = task.retryPayload;
+      runEpisodeBackground(task.id, p.cSId, p.cS, p.cE, p.cT, p.cV, p.cSub);
+    }
+  };
+
+  const handleCreateTVSeries = async () => {
+    if (!title || !category || !posterFile) return;
+    setTvSeriesUploading(true);
+    try {
+      const timestamp = Date.now();
+      const safeSlug = title.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
+      const posterUrl = await uploadFile(posterFile, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
+      const { error } = await supabase.from('movies').insert({ 
+          title, 
+          description: description || null, 
+          poster_url: posterUrl, 
+          type: 'TV Series', 
+          category, 
+          status: 'active' 
+      });
+      if (error) throw error;
+      setTitle(''); setDescription(''); setCategory(null); setPosterFile(null);
+      fetchTvSeries();
+      if (Platform.OS === 'web') window.alert("Series created!");
+    } catch(e: any) { 
+        if (Platform.OS === 'web') window.alert("Error: " + e.message);
+        else Alert.alert("Error", e.message);
+    } finally { setTvSeriesUploading(false); }
   };
 
   const fetchTvSeries = useCallback(async () => {
@@ -501,7 +520,25 @@ export default function AdminScreen() {
                 <Text style={styles.queueHeader}>Active Tasks</Text>
                 {uploadTasks.map(task => (
                   <View key={task.id} style={styles.taskCard}>
-                    <View style={styles.taskHeader}><Text style={styles.taskTitle}>{task.title}</Text>{(task.status==='done'||task.status==='error') && <Pressable onPress={()=>removeTask(task.id)}><Ionicons name="close" size={20} color="#888"/></Pressable>}</View>
+                    <View style={styles.taskHeader}>
+                      <Text style={styles.taskTitle}>{task.title}</Text>
+                      <View style={{flexDirection: 'row', gap: 15, alignItems: 'center'}}>
+                        {task.status === 'error' && (
+                          <Pressable 
+                            onPress={() => handleRetryTask(task)} 
+                            style={{flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#333', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6}}
+                          >
+                            <Ionicons name="refresh" size={16} color="#3b82f6" />
+                            <Text style={{color: '#3b82f6', fontSize: 12, fontWeight: 'bold'}}>Retry</Text>
+                          </Pressable>
+                        )}
+                        {(task.status === 'done' || task.status === 'error') && (
+                          <Pressable onPress={() => removeTask(task.id)}>
+                            <Ionicons name="close" size={20} color="#888" />
+                          </Pressable>
+                        )}
+                      </View>
+                    </View>
                     {task.status==='uploading' && <View style={styles.taskProgressRow}><View style={styles.taskProgressBarBg}><View style={[styles.taskProgressBarFill, {width:`${task.progress}%`}]}/></View><Text style={styles.taskProgressText}>{task.progress}%</Text></View>}
                     <Text style={[styles.taskMessage, task.status === 'error' ? styles.taskErrorText : task.status === 'done' ? styles.taskSuccessText : null]}>
                         {task.message}
