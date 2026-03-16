@@ -22,7 +22,6 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initial
     const video = videoRef.current;
     if (!video || !url) return;
 
-    // Dynamically import HLS.js only on the web
     import('hls.js').then((HlsModule) => {
       const Hls = HlsModule.default;
 
@@ -32,7 +31,6 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initial
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(e => console.log("Autoplay blocked:", e)); });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        // Safari fallback
         video.src = url;
         video.currentTime = initialTime;
         video.addEventListener('loadedmetadata', () => { video.play().catch(e => console.log("Autoplay blocked:", e)); });
@@ -60,14 +58,13 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initial
   );
 }
 
-// --- HYBRID PLAYER BLOCK ---
+// --- HYBRID PLAYER BLOCK WITH VIEW TRACKER ---
 function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url: string; onError: (msg: string) => void; initialTime: number; movieId: string; userId: string | null; }) {
   const isWeb = Platform.OS === 'web';
   const { width } = Dimensions.get('window');
   const maxVideoWidth = isWeb ? Math.min(width - 40, 960) : width;
   const videoHeight = maxVideoWidth * (9 / 16);
 
-  // -- Mobile Expo-Video Logic --
   const player = !isWeb ? useVideoPlayer(url, (p) => {
     p.loop = false;
     p.staysActiveInBackground = true; 
@@ -78,8 +75,10 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
   const status = statusEvent?.status ?? player?.status;
   const playerError = statusEvent?.error;
   const [hasSeeked, setHasSeeked] = useState(false);
+  
+  // NEW: Ref to ensure we only count 1 view per playback session
+  const hasCountedView = useRef(false);
 
-  // Mobile Error Handling
   useEffect(() => { 
     if (!isWeb && playerError) {
       let msg = 'Unknown Error';
@@ -89,7 +88,6 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
     }
   }, [playerError, onError, isWeb]);
 
-  // Mobile Initial Seek
   useEffect(() => {
     if (!isWeb && player && status === 'readyToPlay' && initialTime > 0 && !hasSeeked) {
       player.currentTime = initialTime;
@@ -97,12 +95,21 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
     }
   }, [status, initialTime, hasSeeked, player, isWeb]);
 
-  // Unified Progress Tracking (Every 10 seconds)
   const lastUpdateRef = useRef(0);
   const handleProgress = useCallback((currentTime: number) => {
     if (!userId || !movieId || currentTime < 5) return;
+
+    // ---> NEW: STAT TRACKER (Add +1 View) <---
+    // If they watch more than 5 seconds, register it as a solid "View"
+    if (!hasCountedView.current) {
+      hasCountedView.current = true;
+      supabase.rpc('increment_view_count', { row_id: movieId }).then();
+      console.log("View Logged for Movie ID:", movieId);
+    }
+
+    // Save Resume Progress (Every 10 seconds)
     const now = Date.now();
-    if (now - lastUpdateRef.current > 10000) { // Throttle to 10s
+    if (now - lastUpdateRef.current > 10000) { 
       supabase.from('playback_progress').upsert(
         { user_id: userId, movie_id: movieId, timestamp_seconds: Math.floor(currentTime), updated_at: new Date().toISOString() }, 
         { onConflict: 'user_id, movie_id' }
@@ -111,7 +118,6 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
     }
   }, [userId, movieId]);
 
-  // Mobile Progress Interval
   useEffect(() => {
     if (isWeb || !player) return;
     const interval = setInterval(() => { if (player.playing) handleProgress(player.currentTime); }, 2000);
@@ -279,7 +285,6 @@ export default function TheaterScreen() {
       if (!movie || isOfflineMode || !videoUrl || isDownloading || isDownloaded) return;
       if (!userId) { router.push('/settings'); return; }
 
-      // We remove the MP4 hack since basic assets don't have MP4s
       const mp4Url = videoUrl;
 
       if (Platform.OS === 'web') {
