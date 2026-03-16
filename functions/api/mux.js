@@ -1,7 +1,19 @@
 export async function onRequest(context) {
   const { request } = context;
-  
+
+  // 1. SECURITY HANDSHAKE (CORS) - Tells browsers this connection is safe
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+    });
+  }
+
   // ---> YOUR SECURE KEYS GO HERE <---
+  // Do not leave any spaces inside the quotes!
   const MUX_TOKEN_ID = 'e9e97029-07a5-48c3-8afc-20b3b07ca94a';
   const MUX_TOKEN_SECRET = 'fBcT0uzhTYHJZBHwtOJW0l6NJ3Jc1YL6x6rfTy1+cJG/7D+vZlj9duYR2Y2lEoCBMY6EIGTxH8F';
   
@@ -15,7 +27,7 @@ export async function onRequest(context) {
         playback_policy: ['public'], 
         video_quality: 'basic', 
         mp4_support: 'standard',
-        passthrough: body.passthrough // <-- Added the secret nametag here!
+        passthrough: body.passthrough || 'unknown'
       }, 
       cors_origin: '*' 
     };
@@ -24,31 +36,26 @@ export async function onRequest(context) {
        payload.new_asset_settings.text_tracks = [{ url: body.subtitleUrl, type: 'subtitles', language_code: 'en', name: 'English', closed_captions: true }];
     }
 
+    // 2. ASK MUX FOR THE UPLOAD URL
     const response = await fetch('https://api.mux.com/video/v1/uploads', {
       method: 'POST',
-      headers: { 'Authorization': `Basic ${credentials}`, 'Content-Type': 'application/json' },
+      headers: { 
+        'Authorization': `Basic ${credentials}`, 
+        'Content-Type': 'application/json' 
+      },
       body: JSON.stringify(payload)
     });
     
     const data = await response.json();
-    return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
-  }
-
-  // We actually don't need the GET method anymore because of webhooks, but we'll leave it so nothing breaks!
-  if (request.method === 'GET') {
-    const url = new URL(request.url);
-    const uploadId = url.searchParams.get('uploadId');
-
-    const checkRes = await fetch(`https://api.mux.com/video/v1/uploads/${uploadId}`, { headers: { 'Authorization': `Basic ${credentials}` } });
-    const checkData = await checkRes.json();
-
-    let playbackId = null;
-    if (checkData.data?.asset_id) {
-       const assetRes = await fetch(`https://api.mux.com/video/v1/assets/${checkData.data.asset_id}`, { headers: { 'Authorization': `Basic ${credentials}` } });
-       const assetData = await assetRes.json();
-       if (assetData.data?.playback_ids?.length > 0) playbackId = assetData.data.playback_ids[0].id;
-    }
-    return new Response(JSON.stringify({ playbackId }), { headers: { 'Content-Type': 'application/json' } });
+    
+    // 3. SEND THE URL (OR EXACT ERROR) BACK TO YOUR APP
+    return new Response(JSON.stringify(data), { 
+        status: response.status,
+        headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        } 
+    });
   }
 
   return new Response("Method Not Allowed", { status: 405 });
