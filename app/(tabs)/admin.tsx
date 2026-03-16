@@ -15,7 +15,7 @@ type UploadTask = {
   progress: number; 
   status: 'uploading' | 'processing' | 'done' | 'error' | 'step-label'; 
   message?: string; 
-  retryPayload?: any; // <--- This holds the secret backup data
+  retryPayload?: any; 
 };
 
 export default function AdminScreen() {
@@ -23,7 +23,7 @@ export default function AdminScreen() {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
 
-  const [activeSection, setActiveSection] = useState<'upload' | 'manage' | 'trash'>('upload');
+  const [activeSection, setActiveSection] = useState<'dashboard' | 'upload' | 'manage' | 'trash'>('dashboard');
   const [uploadMode, setUploadMode] = useState<'movie' | 'tvseries' | 'episode'>('movie');
   
   const [title, setTitle] = useState('');
@@ -63,6 +63,18 @@ export default function AdminScreen() {
   const [selectedManageIds, setSelectedManageIds] = useState<string[]>([]);
   const [selectedTrashIds, setSelectedTrashIds] = useState<string[]>([]);
 
+  const [statsLoading, setStatsLoading] = useState(false);
+  
+  // ---> UPDATED: Added leaderboard array to our state <---
+  const [platformStats, setPlatformStats] = useState({
+    totalViews: 0,
+    totalMovies: 0,
+    totalSeries: 0,
+    topCategory: 'N/A',
+    topTitle: 'No Views Yet',
+    leaderboard: [] as any[]
+  });
+
   useEffect(() => {
     const checkAdmin = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -77,6 +89,73 @@ export default function AdminScreen() {
     };
     checkAdmin();
   }, [router]);
+
+  const fetchDashboardStats = useCallback(async () => {
+    setStatsLoading(true);
+    try {
+      const { count: movieCount } = await supabase.from('movies').select('*', { count: 'exact', head: true }).eq('type', 'Movie').eq('status', 'active');
+      const { count: seriesCount } = await supabase.from('movies').select('*', { count: 'exact', head: true }).eq('type', 'TV Series').eq('status', 'active');
+      
+      // We grab "type" now so we can label it in the leaderboard
+      const { data: viewData } = await supabase.from('movies').select('id, title, views, category, type').eq('status', 'active');
+      
+      let totalViews = 0;
+      const categoryCounts: Record<string, number> = {};
+      
+      let topTitleName = 'No Views Yet';
+      let highestViewCount = -1;
+      let sortedLeaderboard: any[] = [];
+
+      if (viewData) {
+        viewData.forEach(item => {
+          const v = item.views || 0;
+          totalViews += v;
+          
+          if (item.category) {
+            categoryCounts[item.category] = (categoryCounts[item.category] || 0) + v;
+          }
+
+          if (v > highestViewCount && v > 0) {
+            highestViewCount = v;
+            topTitleName = `${item.title} (${v} views)`;
+          }
+        });
+
+        // Sort the entire list from most views to least views
+        sortedLeaderboard = [...viewData].sort((a, b) => (b.views || 0) - (a.views || 0));
+      }
+
+      let topCat = 'None Yet';
+      let maxCatViews = -1;
+      for (const [cat, views] of Object.entries(categoryCounts)) {
+        if (views > maxCatViews) {
+          maxCatViews = views;
+          topCat = cat;
+        }
+      }
+
+      setPlatformStats({
+        totalMovies: movieCount || 0,
+        totalSeries: seriesCount || 0,
+        totalViews,
+        topCategory: maxCatViews > 0 ? `${topCat} (${maxCatViews})` : 'Not enough data',
+        topTitle: topTitleName,
+        leaderboard: sortedLeaderboard
+      });
+
+    } catch (err) {
+      console.error("Failed to load stats", err);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeSection === 'dashboard') {
+      fetchDashboardStats();
+    }
+  }, [activeSection, fetchDashboardStats]);
+
 
   const updateTask = (id: string, updates: Partial<UploadTask>) => { 
     setUploadTasks(prev => prev.map(task => task.id === id ? { ...task, ...updates } : task)); 
@@ -119,7 +198,6 @@ export default function AdminScreen() {
     return supabase.storage.from('movies').getPublicUrl(data.path).data.publicUrl;
   };
 
-  // --- UPGRADED WEBHOOK UPLOADER WITH VIP PASSCODE ---
   const uploadVideoToMux = async (fileObj: any, taskId: string, subtitleUrl?: string | null, passthrough?: string): Promise<void> => {
     let blob = fileObj.file;
     if (!blob) { const response = await fetch(fileObj.uri); blob = await response.blob(); }
@@ -176,7 +254,6 @@ export default function AdminScreen() {
     const taskId = Date.now().toString();
     const cT = title; const cD = description; const cC = category; const cP = posterFile; const cV = videoFile; const cS = subtitleFile;
     
-    // Save data secretly for retries
     setUploadTasks(prev => [{ 
       id: taskId, title: title, type: 'Movie', progress: 0, status: 'uploading', message: 'Starting...',
       retryPayload: { cT, cD, cC, cP, cV, cS } 
@@ -226,7 +303,6 @@ export default function AdminScreen() {
     const taskId = Date.now().toString();
     const cSId = selectedSeriesId; const cS = parseInt(seasonNumber); const cE = parseInt(episodeNumber); const cT = episodeTitle; const cV = episodeVideoFile; const cSub = episodeSubtitleFile;
     
-    // Save data secretly for retries
     setUploadTasks(prev => [{ 
       id: taskId, title: `S${seasonNumber}E${episodeNumber}: ${episodeTitle}`, type: 'Episode', progress: 0, status: 'uploading', message: 'Starting...',
       retryPayload: { cSId, cS, cE, cT, cV, cSub }
@@ -269,7 +345,6 @@ export default function AdminScreen() {
     }
   };
 
-  // --- RETRY LOGIC ---
   const handleRetryTask = (task: UploadTask) => {
     updateTask(task.id, { status: 'uploading', progress: 0, message: 'Retrying...' });
     if (task.type === 'Movie' && task.retryPayload) {
@@ -441,10 +516,91 @@ export default function AdminScreen() {
     <View style={styles.container}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <View style={styles.tabRow}>
+          <Pressable style={[styles.tabButton, activeSection === 'dashboard' && styles.tabButtonActive]} onPress={() => { setActiveSection('dashboard'); setEditingMovie(null); }}><Text style={[styles.tabButtonLabel, activeSection === 'dashboard' && styles.tabButtonLabelActive]}>Dashboard</Text></Pressable>
           <Pressable style={[styles.tabButton, activeSection === 'upload' && styles.tabButtonActive]} onPress={() => { setActiveSection('upload'); setEditingMovie(null); }}><Text style={[styles.tabButtonLabel, activeSection === 'upload' && styles.tabButtonLabelActive]}>Upload</Text></Pressable>
           <Pressable style={[styles.tabButton, activeSection === 'manage' && styles.tabButtonActive]} onPress={() => setActiveSection('manage')}><Text style={[styles.tabButtonLabel, activeSection === 'manage' && styles.tabButtonLabelActive]}>Manage</Text></Pressable>
           <Pressable style={[styles.tabButton, activeSection === 'trash' && styles.tabButtonActive]} onPress={() => { setActiveSection('trash'); setEditingMovie(null); }}><Text style={[styles.tabButtonLabel, activeSection === 'trash' && styles.tabButtonLabelActive]}>Trash</Text></Pressable>
         </View>
+
+        {/* --- DASHBOARD SECTION --- */}
+        {activeSection === 'dashboard' && (
+          <View style={styles.dashboardContainer}>
+            <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20}}>
+              <Text style={styles.dashboardTitle}>Platform Analytics</Text>
+              <Pressable onPress={fetchDashboardStats}>
+                {statsLoading ? <ActivityIndicator color="#e50914" /> : <Ionicons name="refresh" size={24} color="#888" />}
+              </Pressable>
+            </View>
+
+            <View style={styles.statsGrid}>
+              <View style={styles.statCard}>
+                <Ionicons name="eye" size={28} color="#e50914" style={styles.statIcon} />
+                <Text style={styles.statValue}>{platformStats.totalViews.toLocaleString()}</Text>
+                <Text style={styles.statLabel}>Total Views</Text>
+              </View>
+              
+              <View style={styles.statCard}>
+                <Ionicons name="film" size={28} color="#3b82f6" style={styles.statIcon} />
+                <Text style={styles.statValue}>{platformStats.totalMovies}</Text>
+                <Text style={styles.statLabel}>Active Movies</Text>
+              </View>
+
+              <View style={styles.statCard}>
+                <Ionicons name="tv" size={28} color="#10b981" style={styles.statIcon} />
+                <Text style={styles.statValue}>{platformStats.totalSeries}</Text>
+                <Text style={styles.statLabel}>Active TV Series</Text>
+              </View>
+
+              <View style={styles.statCard}>
+                <Ionicons name="trophy" size={28} color="#f59e0b" style={styles.statIcon} />
+                <Text style={[styles.statValue, {fontSize: 16}]} numberOfLines={1}>{platformStats.topCategory}</Text>
+                <Text style={styles.statLabel}>Top Category</Text>
+              </View>
+
+              {/* Most Watched Title Card (Full Width) */}
+              <View style={[styles.statCard, { width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 25, marginTop: 5, borderColor: '#eab308' }]}>
+                 <View style={{ flex: 1, paddingRight: 10 }}>
+                   <Text style={[styles.statValue, {fontSize: 22, color: '#eab308'}]} numberOfLines={1}>{platformStats.topTitle}</Text>
+                   <Text style={styles.statLabel}>Most Watched Title</Text>
+                 </View>
+                 <Ionicons name="star" size={36} color="#eab308" />
+              </View>
+            </View>
+            
+            {/* ---> NEW: LEADERBOARD LIST <--- */}
+            <View style={styles.leaderboardSection}>
+              <View style={{flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 15}}>
+                 <Ionicons name="list" size={22} color="#fff" />
+                 <Text style={styles.leaderboardSectionTitle}>Content Leaderboard</Text>
+              </View>
+              
+              {platformStats.leaderboard.length === 0 ? (
+                 <Text style={{color: '#666'}}>No content available yet.</Text>
+              ) : (
+                 platformStats.leaderboard.map((item, index) => (
+                   <View key={item.id} style={styles.leaderboardRow}>
+                     <Text style={styles.rankText}>#{index + 1}</Text>
+                     <View style={{flex: 1}}>
+                       <Text style={styles.leaderboardTitle}>{item.title}</Text>
+                       <Text style={styles.leaderboardCategory}>{item.category || 'Other'} • {item.type || 'Movie'}</Text>
+                     </View>
+                     <View style={{alignItems: 'flex-end'}}>
+                       <Text style={styles.leaderboardViews}>{item.views || 0}</Text>
+                       <Text style={{color: '#666', fontSize: 10}}>views</Text>
+                     </View>
+                   </View>
+                 ))
+              )}
+            </View>
+
+            <View style={styles.dashboardTipCard}>
+              <Ionicons name="information-circle" size={24} color="#666" />
+              <Text style={styles.dashboardTipText}>
+                Views are automatically counted when a user watches a movie for more than 5 seconds. Use this data to see what content your audience loves the most!
+              </Text>
+            </View>
+          </View>
+        )}
 
         {/* --- UPLOAD SECTION --- */}
         {activeSection === 'upload' && (
@@ -723,5 +879,25 @@ const styles = StyleSheet.create({
   bulkActionButton: { backgroundColor: '#b91c1c', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8 },
   bulkActionButtonText: { color: '#fff', fontWeight: 'bold' },
   episodeManager: { marginTop: 20, borderTopWidth: 1, borderTopColor: '#222', paddingTop: 15 },
-  epEditCard: { backgroundColor: '#181818', padding: 12, borderRadius: 10, marginBottom: 10, borderWidth: 1, borderColor: '#2a2a2a' }
+  epEditCard: { backgroundColor: '#181818', padding: 12, borderRadius: 10, marginBottom: 10, borderWidth: 1, borderColor: '#2a2a2a' },
+  
+  // DASHBOARD STYLES
+  dashboardContainer: { paddingBottom: 20 },
+  dashboardTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff' },
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 15 },
+  statCard: { width: '47%', backgroundColor: '#111', padding: 20, borderRadius: 12, borderWidth: 1, borderColor: '#1f1f1f', alignItems: 'center', justifyContent: 'center' },
+  statIcon: { marginBottom: 10 },
+  statValue: { fontSize: 28, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
+  statLabel: { fontSize: 13, color: '#888', fontWeight: '600' },
+  dashboardTipCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', padding: 16, borderRadius: 10, marginTop: 20, borderWidth: 1, borderColor: '#2a2a2a', gap: 12 },
+  dashboardTipText: { flex: 1, color: '#aaa', fontSize: 13, lineHeight: 20 },
+
+  // NEW: LEADERBOARD STYLES
+  leaderboardSection: { marginTop: 30, backgroundColor: '#111', borderRadius: 12, padding: 20, borderWidth: 1, borderColor: '#1f1f1f' },
+  leaderboardSectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff' },
+  leaderboardRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#222' },
+  rankText: { fontSize: 16, fontWeight: 'bold', color: '#888', width: 40 },
+  leaderboardTitle: { fontSize: 15, fontWeight: 'bold', color: '#fff' },
+  leaderboardCategory: { fontSize: 12, color: '#666', marginTop: 2 },
+  leaderboardViews: { fontSize: 16, fontWeight: 'bold', color: '#e50914' },
 });
