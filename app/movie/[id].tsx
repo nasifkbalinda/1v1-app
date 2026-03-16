@@ -6,72 +6,134 @@ import { useEvent } from 'expo';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; };
 type Episode = { id: string; season_number: number; episode_number: number; title: string; video_url: string | null; };
 
-function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url: string; onError: (msg: string) => void; initialTime: number; movieId: string; userId: string | null; }) {
-  const playableUrl = (Platform.OS === 'web' && url.includes('stream.mux.com')) 
-    ? url.replace('.m3u8', '/capped-1080p.mp4') 
-    : url;
-
-  const player = useVideoPlayer(playableUrl, (p) => {
-    p.loop = false;
-    p.staysActiveInBackground = true; 
-    p.play();
-  });
-
-  const statusEvent = useEvent(player, 'statusChange', { status: player.status } as any) as any;
-  const status = statusEvent?.status ?? player.status;
-  const playerError = statusEvent?.error;
-  
-  const [hasSeeked, setHasSeeked] = useState(false);
-
-  useEffect(() => { 
-    if (playerError) {
-      let msg = 'Unknown Error';
-      if (typeof playerError === 'object' && playerError !== null) {
-        msg = (playerError as any).message || JSON.stringify(playerError);
-      } else { msg = String(playerError); }
-      onError(`File Corrupted or Missing: ${msg}`); 
-    }
-  }, [playerError, onError]);
+// --- WEB-SPECIFIC HLS PLAYER ---
+function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initialTime: number; onTimeUpdate: (time: number) => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    if (status === 'readyToPlay' && initialTime > 0 && !hasSeeked) {
-      player.currentTime = initialTime;
-      setHasSeeked(true);
-    }
-  }, [status, initialTime, hasSeeked, player]);
+    let hls: any;
+    const video = videoRef.current;
+    if (!video || !url) return;
 
-  useEffect(() => {
-    if (!userId || !movieId) return;
-    const interval = setInterval(() => {
-      if (player.playing && player.currentTime > 5) {
-        supabase.from('playback_progress').upsert({ user_id: userId, movie_id: movieId, timestamp_seconds: Math.floor(player.currentTime), updated_at: new Date().toISOString() }, { onConflict: 'user_id, movie_id' }).then();
+    // Dynamically import HLS.js only on the web
+    import('hls.js').then((HlsModule) => {
+      const Hls = HlsModule.default;
+
+      if (Hls.isSupported()) {
+        hls = new Hls({ startPosition: initialTime });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(e => console.log("Autoplay blocked:", e)); });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari fallback
+        video.src = url;
+        video.currentTime = initialTime;
+        video.addEventListener('loadedmetadata', () => { video.play().catch(e => console.log("Autoplay blocked:", e)); });
       }
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [player, movieId, userId]);
+    });
 
-  const { width } = Dimensions.get('window');
+    return () => { if (hls) hls.destroy(); };
+  }, [url, initialTime]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const handleTimeUpdate = () => onTimeUpdate(video.currentTime);
+    video.addEventListener('timeupdate', handleTimeUpdate);
+    return () => video.removeEventListener('timeupdate', handleTimeUpdate);
+  }, [onTimeUpdate]);
+
+  return (
+    <video
+      ref={videoRef}
+      controls
+      autoPlay
+      style={{ width: '100%', height: '100%', backgroundColor: '#000', borderRadius: 12 }}
+    />
+  );
+}
+
+// --- HYBRID PLAYER BLOCK ---
+function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url: string; onError: (msg: string) => void; initialTime: number; movieId: string; userId: string | null; }) {
   const isWeb = Platform.OS === 'web';
+  const { width } = Dimensions.get('window');
   const maxVideoWidth = isWeb ? Math.min(width - 40, 960) : width;
   const videoHeight = maxVideoWidth * (9 / 16);
 
+  // -- Mobile Expo-Video Logic --
+  const player = !isWeb ? useVideoPlayer(url, (p) => {
+    p.loop = false;
+    p.staysActiveInBackground = true; 
+    p.play();
+  }) : null;
+
+  const statusEvent = !isWeb ? useEvent(player, 'statusChange', { status: player?.status } as any) as any : null;
+  const status = statusEvent?.status ?? player?.status;
+  const playerError = statusEvent?.error;
+  const [hasSeeked, setHasSeeked] = useState(false);
+
+  // Mobile Error Handling
+  useEffect(() => { 
+    if (!isWeb && playerError) {
+      let msg = 'Unknown Error';
+      if (typeof playerError === 'object' && playerError !== null) { msg = (playerError as any).message || JSON.stringify(playerError); } 
+      else { msg = String(playerError); }
+      onError(`File Corrupted or Missing: ${msg}`); 
+    }
+  }, [playerError, onError, isWeb]);
+
+  // Mobile Initial Seek
+  useEffect(() => {
+    if (!isWeb && player && status === 'readyToPlay' && initialTime > 0 && !hasSeeked) {
+      player.currentTime = initialTime;
+      setHasSeeked(true);
+    }
+  }, [status, initialTime, hasSeeked, player, isWeb]);
+
+  // Unified Progress Tracking (Every 10 seconds)
+  const lastUpdateRef = useRef(0);
+  const handleProgress = useCallback((currentTime: number) => {
+    if (!userId || !movieId || currentTime < 5) return;
+    const now = Date.now();
+    if (now - lastUpdateRef.current > 10000) { // Throttle to 10s
+      supabase.from('playback_progress').upsert(
+        { user_id: userId, movie_id: movieId, timestamp_seconds: Math.floor(currentTime), updated_at: new Date().toISOString() }, 
+        { onConflict: 'user_id, movie_id' }
+      ).then();
+      lastUpdateRef.current = now;
+    }
+  }, [userId, movieId]);
+
+  // Mobile Progress Interval
+  useEffect(() => {
+    if (isWeb || !player) return;
+    const interval = setInterval(() => { if (player.playing) handleProgress(player.currentTime); }, 2000);
+    return () => clearInterval(interval);
+  }, [player, isWeb, handleProgress]);
+
   return (
     <View style={{ alignItems: 'center', backgroundColor: '#000', paddingVertical: isWeb ? 24 : 0 }}>
-      <VideoView 
-        style={[styles.videoView, { width: maxVideoWidth, height: videoHeight, borderRadius: isWeb ? 12 : 0, overflow: 'hidden' }]} 
-        player={player} 
-        contentFit="contain" 
-        nativeControls={true} 
-        fullscreenOptions={{ enable: true }} 
-        allowsPictureInPicture 
-      />
+      <View style={{ width: maxVideoWidth, height: videoHeight, borderRadius: isWeb ? 12 : 0, overflow: 'hidden' }}>
+        {isWeb ? (
+          <WebHLSPlayer url={url} initialTime={initialTime} onTimeUpdate={handleProgress} />
+        ) : (
+          <VideoView 
+            style={[styles.videoView, { width: '100%', height: '100%' }]} 
+            player={player!} 
+            contentFit="contain" 
+            nativeControls={true} 
+            fullscreenOptions={{ enable: true }} 
+            allowsPictureInPicture 
+          />
+        )}
+      </View>
     </View>
   );
 }
@@ -192,10 +254,7 @@ export default function TheaterScreen() {
 
   const handleWatchlistToggle = useCallback(async () => {
     if (!movie || isOfflineMode || watchlistToggling) return;
-    if (!userId) {
-      router.push('/settings'); // Redirect instantly
-      return;
-    }
+    if (!userId) { router.push('/settings'); return; }
     setWatchlistToggling(true);
     try {
       if (isInMyList) {
@@ -210,12 +269,7 @@ export default function TheaterScreen() {
 
   const handlePlayRequest = (urlToPlay: string | null) => {
     if (!urlToPlay) return;
-    
-    if (!userId && !isOfflineMode) {
-        router.push('/settings'); // Redirect instantly
-        return;
-    }
-
+    if (!userId && !isOfflineMode) { router.push('/settings'); return; }
     setCurrentVideoUrl(urlToPlay);
     setIsPlaying(true);
   };
@@ -223,24 +277,13 @@ export default function TheaterScreen() {
   const downloadVideo = useCallback(
     async (videoUrl: string, title: string) => {
       if (!movie || isOfflineMode || !videoUrl || isDownloading || isDownloaded) return;
+      if (!userId) { router.push('/settings'); return; }
 
-      if (!userId) {
-          router.push('/settings'); // Redirect instantly
-          return;
-      }
-
-      const mp4Url = videoUrl.includes('stream.mux.com') ? videoUrl.replace('.m3u8', '/capped-1080p.mp4') : videoUrl;
+      // We remove the MP4 hack since basic assets don't have MP4s
+      const mp4Url = videoUrl;
 
       if (Platform.OS === 'web') {
-        if (typeof window !== 'undefined') {
-          const a = document.createElement('a');
-          a.href = mp4Url;
-          a.download = `${title}.mp4`;
-          a.target = '_blank';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-        }
+        if (typeof window !== 'undefined') window.alert("Downloads are currently disabled on Web for streaming assets.");
         return;
       }
 
@@ -263,7 +306,7 @@ export default function TheaterScreen() {
           Alert.alert('Download Complete', `${title} has been saved for offline viewing.`);
         } else {
           await FileSystem.deleteAsync(fileUri, { idempotent: true });
-          Alert.alert('Not Ready Yet', 'The high-quality MP4 file is still processing on the servers. Please try again in a few minutes.');
+          Alert.alert('Download Failed', 'Could not fetch media file.');
         }
       } catch (err) { Alert.alert('Download Failed', 'Check your network connection and try again.'); } finally { setIsDownloading(false); setDownloadProgress(null); }
     },
@@ -274,7 +317,6 @@ export default function TheaterScreen() {
     if (!movie) return;
     const activeVideoUrl = currentVideoUrl || movie!.video_url; 
     if (!activeVideoUrl) return;
-    if (Platform.OS === 'web') window.alert("Your download will begin shortly. \n\nNote: For brand new uploads, the high-quality MP4 file may take 3-5 minutes to finish processing in the background before the download link works.");
     await downloadVideo(activeVideoUrl, movie!.title);
   }, [movie, currentVideoUrl, downloadVideo]);
 
