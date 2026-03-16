@@ -8,7 +8,14 @@ import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, 
 
 const ADMIN_EMAIL = 'saifnasif1@gmail.com';
 
-type UploadTask = { id: string; title: string; type: 'Movie' | 'Episode'; progress: number; status: 'uploading' | 'processing' | 'done' | 'error'; message?: string; };
+type UploadTask = { 
+  id: string; 
+  title: string; 
+  type: 'Movie' | 'Episode'; 
+  progress: number; 
+  status: 'uploading' | 'processing' | 'done' | 'error' | 'step-label'; 
+  message?: string; 
+};
 
 export default function AdminScreen() {
   const router = useRouter();
@@ -70,7 +77,9 @@ export default function AdminScreen() {
     checkAdmin();
   }, [router]);
 
-  const updateTask = (id: string, updates: Partial<UploadTask>) => { setUploadTasks(prev => prev.map(task => task.id === id ? { ...task, ...updates } : task)); };
+  const updateTask = (id: string, updates: Partial<UploadTask>) => { 
+    setUploadTasks(prev => prev.map(task => task.id === id ? { ...task, ...updates } : task)); 
+  };
   const removeTask = (id: string) => { setUploadTasks(prev => prev.filter(task => task.id !== id)); };
 
   const pickPoster = async () => {
@@ -109,31 +118,47 @@ export default function AdminScreen() {
     return supabase.storage.from('movies').getPublicUrl(data.path).data.publicUrl;
   };
 
-  // --- UPGRADED WEBHOOK UPLOADER ---
+  // --- UPGRADED WEBHOOK UPLOADER WITH LOGGING ---
   const uploadVideoToMux = async (fileObj: any, taskId: string, subtitleUrl?: string | null, passthrough?: string): Promise<void> => {
     let blob = fileObj.file;
     if (!blob) { const response = await fetch(fileObj.uri); blob = await response.blob(); }
     
-    // We send the passthrough nametag to our backend
-    const backendRes = await fetch('/api/mux', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subtitleUrl, passthrough }) });
+    updateTask(taskId, { message: 'Connecting to Mux backend...' });
+
+    const backendRes = await fetch('https://1v1-app.pages.dev/api/mux', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ subtitleUrl, passthrough }) 
+    });
+
+    if (!backendRes.ok) {
+        const errText = await backendRes.text();
+        throw new Error(`Mux Connection Failed: ${errText}`);
+    }
+
     const muxUpload = await backendRes.json();
-    if (!muxUpload.data) throw new Error(`Backend Error`);
+    if (!muxUpload.data?.url) throw new Error(`Mux Backend Error: No Upload URL provided`);
+    
     const { url: uploadUrl } = muxUpload.data;
     
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', uploadUrl);
-      xhr.upload.onprogress = (event) => { if (event.lengthComputable) updateTask(taskId, { progress: Math.round((event.loaded / event.total) * 100) }); };
+      xhr.upload.onprogress = (event) => { 
+          if (event.lengthComputable) {
+              const progress = Math.round((event.loaded / event.total) * 100);
+              updateTask(taskId, { progress, message: `Uploading Video: ${progress}%` }); 
+          }
+      };
       
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
-          // As soon as the raw upload hits 100%, we are done! No more waiting for processing.
-          updateTask(taskId, { status: 'done', progress: 100 });
+          updateTask(taskId, { status: 'done', progress: 100, message: 'Upload Complete! Movie will appear soon.' });
           resolve();
-        } else { reject(new Error(`Upload failed`)); }
+        } else { reject(new Error(`Video Data Upload Failed (${xhr.status})`)); }
       };
       
-      xhr.onerror = () => reject(new Error(`Network error during upload`));
+      xhr.onerror = () => reject(new Error(`Network error during video transfer`));
       xhr.send(blob);
     });
   };
@@ -145,7 +170,8 @@ export default function AdminScreen() {
         return;
     }
     const taskId = Date.now().toString();
-    setUploadTasks(prev => [...prev, { id: taskId, title: title, type: 'Movie', progress: 0, status: 'uploading' }]);
+    setUploadTasks(prev => [{ id: taskId, title: title, type: 'Movie', progress: 0, status: 'uploading', message: 'Starting...' }, ...prev]);
+    
     const cT = title; const cD = description; const cC = category; const cP = posterFile; const cV = videoFile; const cS = subtitleFile;
     setTitle(''); setDescription(''); setCategory(null); setPosterFile(null); setVideoFile(null); setSubtitleFile(null);
     runMovieBackground(taskId, cT, cD, cC, cP, cV, cS);
@@ -156,24 +182,37 @@ export default function AdminScreen() {
       const timestamp = Date.now();
       const safeSlug = title.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
       
+      // Step 1: Poster/Subtitles
+      updateTask(taskId, { message: 'Uploading Poster Image...' });
       let subUrl = null;
       if (subtitle) subUrl = await uploadFile(subtitle, `subtitles/${timestamp}-${safeSlug}.vtt`, 'text/vtt');
       const posterUrl = await uploadFile(poster, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
 
-      // 1. Create the row in Supabase FIRST to get the ID
+      // Step 2: Database Insert
+      updateTask(taskId, { message: 'Creating Database Entry...' });
       const { data, error } = await supabase
         .from('movies')
-        .insert({ title, description: desc || null, poster_url: posterUrl, type: 'Movie', category: cat, status: 'processing' })
+        .insert({ 
+            title, 
+            description: desc || null, 
+            poster_url: posterUrl, 
+            type: 'Movie', 
+            category: cat, 
+            status: 'processing' // The Webhook will flip this to 'active' later
+        })
         .select('id')
         .single();
         
-      if (error) throw error;
+      if (error) throw new Error(`Database Error: ${error.message}`);
       const movieId = data.id;
 
-      // 2. Upload to Mux with the secret nametag (e.g., "movies:123")
+      // Step 3: Mux Upload
       await uploadVideoToMux(video, taskId, subUrl, `movies:${movieId}`);
       
-    } catch (e: any) { updateTask(taskId, { status: 'error', message: e.message }); }
+    } catch (e: any) { 
+        console.error(e);
+        updateTask(taskId, { status: 'error', message: e.message || 'Unknown Error' }); 
+    }
   };
 
   const handleCreateTVSeries = async () => {
@@ -183,17 +222,29 @@ export default function AdminScreen() {
       const timestamp = Date.now();
       const safeSlug = title.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
       const posterUrl = await uploadFile(posterFile, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
-      await supabase.from('movies').insert({ title, description: description || null, poster_url: posterUrl, type: 'TV Series', category, status: 'active' });
+      const { error } = await supabase.from('movies').insert({ 
+          title, 
+          description: description || null, 
+          poster_url: posterUrl, 
+          type: 'TV Series', 
+          category, 
+          status: 'active' 
+      });
+      if (error) throw error;
       setTitle(''); setDescription(''); setCategory(null); setPosterFile(null);
       fetchTvSeries();
       if (Platform.OS === 'web') window.alert("Series created!");
-    } catch(e: any) { console.error(e); } finally { setTvSeriesUploading(false); }
+    } catch(e: any) { 
+        if (Platform.OS === 'web') window.alert("Error: " + e.message);
+        else Alert.alert("Error", e.message);
+    } finally { setTvSeriesUploading(false); }
   };
 
   const queueEpisodeUpload = () => {
     if (!selectedSeriesId || !seasonNumber || !episodeNumber || !episodeTitle || !episodeVideoFile) return;
     const taskId = Date.now().toString();
-    setUploadTasks(prev => [...prev, { id: taskId, title: `S${seasonNumber}E${episodeNumber}`, type: 'Episode', progress: 0, status: 'uploading' }]);
+    setUploadTasks(prev => [{ id: taskId, title: `S${seasonNumber}E${episodeNumber}: ${episodeTitle}`, type: 'Episode', progress: 0, status: 'uploading', message: 'Starting...' }, ...prev]);
+    
     const cSId = selectedSeriesId; const cS = parseInt(seasonNumber); const cE = parseInt(episodeNumber); const cT = episodeTitle; const cV = episodeVideoFile; const cSub = episodeSubtitleFile;
     setEpisodeTitle(''); setEpisodeNumber(''); setEpisodeVideoFile(null); setEpisodeSubtitleFile(null);
     runEpisodeBackground(taskId, cSId, cS, cE, cT, cV, cSub);
@@ -204,23 +255,32 @@ export default function AdminScreen() {
       const timestamp = Date.now();
       const safeSlug = epTitle.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
       
+      updateTask(taskId, { message: 'Uploading Episode Subtitles...' });
       let subUrl = null;
       if (subtitle) subUrl = await uploadFile(subtitle, `subtitles/${timestamp}-${safeSlug}.vtt`, 'text/vtt');
 
-      // 1. Create the episode row FIRST
+      updateTask(taskId, { message: 'Registering Episode in Database...' });
       const { data, error } = await supabase
         .from('episodes')
-        .insert({ movie_id: seriesId, season_number: seasonNum, episode_number: episodeNum, title: epTitle })
+        .insert({ 
+            movie_id: seriesId, 
+            season_number: seasonNum, 
+            episode_number: episodeNum, 
+            title: epTitle,
+            status: 'processing'
+        })
         .select('id')
         .single();
         
-      if (error) throw error;
+      if (error) throw new Error(`Database Error: ${error.message}`);
       const episodeId = data.id;
 
-      // 2. Upload to Mux with the secret nametag
       await uploadVideoToMux(video, taskId, subUrl, `episodes:${episodeId}`);
       
-    } catch (e: any) { updateTask(taskId, { status: 'error', message: e.message }); }
+    } catch (e: any) { 
+        console.error(e);
+        updateTask(taskId, { status: 'error', message: e.message || 'Unknown Error' }); 
+    }
   };
 
   const fetchTvSeries = useCallback(async () => {
@@ -240,13 +300,11 @@ export default function AdminScreen() {
   useEffect(() => { if (uploadMode === 'episode') fetchTvSeries(); }, [uploadMode, fetchTvSeries]);
   useEffect(() => { if (activeSection === 'manage' || activeSection === 'trash') fetchAllMovies(); }, [activeSection, fetchAllMovies]);
 
-  // --- REFINED MASTER UPDATE LOGIC ---
   const handleMasterUpdate = async () => {
     if (!editingMovie) return;
     setEditSaving(true);
     
     try {
-      // 1. Update the Main Movie/Series Info
       const { error: movieError } = await supabase
         .from('movies')
         .update({ 
@@ -260,7 +318,6 @@ export default function AdminScreen() {
       
       if (movieError) throw movieError;
 
-      // 2. If it's a TV Series, update each episode in the database using Promise.all
       if (editingMovie.type === 'TV Series' && editEpisodes.length > 0) {
         const episodeUpdates = editEpisodes.map(ep => 
           supabase
@@ -282,7 +339,7 @@ export default function AdminScreen() {
       else Alert.alert("Success", "Saved successfully!");
       
       setEditingMovie(null);
-      fetchAllMovies(); // Refresh the list
+      fetchAllMovies();
     } catch (error: any) {
       if (Platform.OS === 'web') window.alert("Update Failed: " + error.message);
       else Alert.alert("Error", error.message);
@@ -351,7 +408,7 @@ export default function AdminScreen() {
     }
   };
 
-  const activeMovies = manageMovies.filter((m) => m.status === 'active');
+  const activeMovies = manageMovies.filter((m) => m.status !== 'trash');
   const trashedMovies = manageMovies.filter((m) => m.status === 'trash');
 
   if (authChecking) return (<View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}><ActivityIndicator size="large" color="#e50914" /></View>);
@@ -442,8 +499,9 @@ export default function AdminScreen() {
                   <View key={task.id} style={styles.taskCard}>
                     <View style={styles.taskHeader}><Text style={styles.taskTitle}>{task.title}</Text>{(task.status==='done'||task.status==='error') && <Pressable onPress={()=>removeTask(task.id)}><Ionicons name="close" size={20} color="#888"/></Pressable>}</View>
                     {task.status==='uploading' && <View style={styles.taskProgressRow}><View style={styles.taskProgressBarBg}><View style={[styles.taskProgressBarFill, {width:`${task.progress}%`}]}/></View><Text style={styles.taskProgressText}>{task.progress}%</Text></View>}
-                    {task.status==='done' && <Text style={styles.taskSuccessText}>Upload complete! You can safely close this tab.</Text>}
-                    {task.status==='error' && <Text style={styles.taskErrorText}>{task.message}</Text>}
+                    <Text style={[styles.taskMessage, task.status === 'error' ? styles.taskErrorText : task.status === 'done' ? styles.taskSuccessText : null]}>
+                        {task.message}
+                    </Text>
                   </View>
                 ))}
               </View>
@@ -539,7 +597,7 @@ export default function AdminScreen() {
 
             {manageLoading ? <ActivityIndicator color="#e50914" /> : (
               trashedMovies.length === 0 ? <Text style={styles.label}>Trash is empty.</Text> :
-              trashed.length === 0 ? null : trashedMovies.map(m => (
+              trashedMovies.map(m => (
                 <View key={m.id} style={styles.manageItem}>
                   <Pressable style={styles.checkboxZone} onPress={() => toggleTrashSelection(m.id)}>
                     <Ionicons name={selectedTrashIds.includes(m.id) ? "checkbox" : "square-outline"} size={22} color={selectedTrashIds.includes(m.id) ? "#e50914" : "#666"} />
@@ -573,7 +631,6 @@ const styles = StyleSheet.create({
   subTabButtonLabel: { color: '#aaa', fontSize: 12, fontWeight: 'bold' },
   subTabButtonLabelActive: { color: '#fff' },
   label: { fontSize: 14, fontWeight: '600', color: '#ccc', marginBottom: 8 },
-  labelSmall: { fontSize: 12, color: '#888', marginBottom: 4 },
   input: { backgroundColor: '#1a1a1a', borderRadius: 10, paddingVertical: 14, paddingHorizontal: 16, fontSize: 16, color: '#fff', borderWidth: 1, borderColor: '#2a2a2a', marginBottom: 20 },
   inputSmall: { backgroundColor: '#111', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 14, color: '#fff', borderWidth: 1, borderColor: '#333' },
   descriptionInput: { minHeight: 88, textAlignVertical: 'top' },
@@ -587,8 +644,8 @@ const styles = StyleSheet.create({
   selectButtonText: { fontSize: 14, color: '#fff', flex: 1 },
   uploadButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: '#e50914', borderRadius: 12, paddingVertical: 18, marginTop: 8 },
   uploadButtonText: { fontSize: 18, fontWeight: '700', color: '#fff' },
-  episodeSeriesList: { maxHeight: 150, marginBottom: 20, gap: 8 },
-  seriesItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#111', borderWidth: 1, borderColor: '#2a2a2a' },
+  episodeSeriesList: { maxHeight: 150, marginBottom: 20 },
+  seriesItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#111', borderWidth: 1, borderColor: '#2a2a2a', marginBottom: 8 },
   seriesItemSelected: { borderColor: '#e50914', backgroundColor: '#1f0a0b' },
   seriesItemText: { fontSize: 14, color: '#fff' },
   queueSection: { marginTop: 40, borderTopWidth: 1, borderTopColor: '#222', paddingTop: 20 },
@@ -600,9 +657,9 @@ const styles = StyleSheet.create({
   taskProgressBarBg: { flex: 1, height: 6, backgroundColor: '#333', borderRadius: 3, overflow: 'hidden' },
   taskProgressBarFill: { height: '100%', backgroundColor: '#e50914' },
   taskProgressText: { color: '#888', fontSize: 12, width: 35, textAlign: 'right' },
-  taskProcessingText: { color: '#e50914', fontSize: 13, fontStyle: 'italic' },
-  taskSuccessText: { color: '#22c55e', fontSize: 13, fontWeight: 'bold' },
-  taskErrorText: { color: '#ef4444', fontSize: 13 },
+  taskMessage: { color: '#888', fontSize: 13, marginTop: 8 },
+  taskSuccessText: { color: '#22c55e', fontWeight: 'bold' },
+  taskErrorText: { color: '#ef4444' },
   manageItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#111', borderWidth: 1, borderColor: '#2a2a2a', marginBottom: 8 },
   checkboxZone: { padding: 5, marginRight: 8 },
   manageInfo: { flex: 1, marginRight: 12 },
