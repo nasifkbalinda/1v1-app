@@ -118,17 +118,20 @@ export default function AdminScreen() {
     return supabase.storage.from('movies').getPublicUrl(data.path).data.publicUrl;
   };
 
-  // --- UPGRADED WEBHOOK UPLOADER WITH LOGGING ---
+  // --- UPGRADED WEBHOOK UPLOADER WITH VIP PASSCODE ---
   const uploadVideoToMux = async (fileObj: any, taskId: string, subtitleUrl?: string | null, passthrough?: string): Promise<void> => {
     let blob = fileObj.file;
     if (!blob) { const response = await fetch(fileObj.uri); blob = await response.blob(); }
     
     updateTask(taskId, { message: 'Connecting to Mux backend...' });
 
-    // CHANGED BACK TO RELATIVE URL HERE
+    // CHANGED: Now includes the VIP x-admin-secret header
     const backendRes = await fetch('/api/mux', { 
         method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-admin-secret': 'v1-super-admin-2026'
+        }, 
         body: JSON.stringify({ subtitleUrl, passthrough }) 
     });
 
