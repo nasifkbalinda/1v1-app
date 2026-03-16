@@ -65,7 +65,7 @@ export default function AdminScreen() {
 
   const [statsLoading, setStatsLoading] = useState(false);
   
-  // ---> UPDATED: Added totalUsers and activeUsers to our state <---
+  // ---> UPDATED: Added DAU, WAU, and MAU <---
   const [platformStats, setPlatformStats] = useState({
     totalViews: 0,
     totalMovies: 0,
@@ -73,7 +73,9 @@ export default function AdminScreen() {
     topCategory: 'N/A',
     topTitle: 'No Views Yet',
     totalUsers: 0,
-    activeUsers: 0,
+    dau: 0,
+    wau: 0,
+    mau: 0,
     leaderboard: [] as any[]
   });
 
@@ -135,15 +137,16 @@ export default function AdminScreen() {
         }
       }
 
-      // ---> NEW: Fetch User Stats <---
-      // Get all-time users
+      // 3. Fetch User Activity Stats
+      const now = new Date();
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
       const { count: totalUsersCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true });
-      
-      // Get users active in the last 7 days
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      const isoDate = sevenDaysAgo.toISOString();
-      const { count: activeUsersCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).gte('last_active', isoDate);
+      const { count: dauCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).gte('last_active', oneDayAgo);
+      const { count: wauCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).gte('last_active', sevenDaysAgo);
+      const { count: mauCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).gte('last_active', thirtyDaysAgo);
 
       setPlatformStats({
         totalMovies: movieCount || 0,
@@ -152,7 +155,9 @@ export default function AdminScreen() {
         topCategory: maxCatViews > 0 ? `${topCat} (${maxCatViews})` : 'Not enough data',
         topTitle: topTitleName,
         totalUsers: totalUsersCount || 0,
-        activeUsers: activeUsersCount || 0,
+        dau: dauCount || 0,
+        wau: wauCount || 0,
+        mau: mauCount || 0,
         leaderboard: sortedLeaderboard
       });
 
@@ -545,46 +550,58 @@ export default function AdminScreen() {
               </Pressable>
             </View>
 
+            {/* AUDIENCE STATS (The New Stuff) */}
+            <Text style={{color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 15}}>Audience</Text>
             <View style={styles.statsGrid}>
-              
-              {/* NEW: User Tracking Cards */}
-              <View style={[styles.statCard, { borderColor: '#10b981' }]}>
-                <Ionicons name="people" size={28} color="#10b981" style={styles.statIcon} />
+              <View style={[styles.statCard, { width: '23%', borderColor: '#6b7280' }]}>
+                <Ionicons name="people" size={24} color="#6b7280" style={styles.statIcon} />
                 <Text style={styles.statValue}>{platformStats.totalUsers.toLocaleString()}</Text>
                 <Text style={styles.statLabel}>Total Users</Text>
               </View>
 
-              <View style={[styles.statCard, { borderColor: '#3b82f6' }]}>
-                <Ionicons name="pulse" size={28} color="#3b82f6" style={styles.statIcon} />
-                <Text style={styles.statValue}>{platformStats.activeUsers.toLocaleString()}</Text>
-                <Text style={styles.statLabel}>Active (7 Days)</Text>
+              <View style={[styles.statCard, { width: '23%', borderColor: '#10b981' }]}>
+                <Text style={styles.statValue}>{platformStats.dau.toLocaleString()}</Text>
+                <Text style={styles.statLabel}>Daily (DAU)</Text>
               </View>
 
-              <View style={styles.statCard}>
-                <Ionicons name="eye" size={28} color="#e50914" style={styles.statIcon} />
+              <View style={[styles.statCard, { width: '23%', borderColor: '#3b82f6' }]}>
+                <Text style={styles.statValue}>{platformStats.wau.toLocaleString()}</Text>
+                <Text style={styles.statLabel}>Weekly (WAU)</Text>
+              </View>
+              
+              <View style={[styles.statCard, { width: '23%', borderColor: '#8b5cf6' }]}>
+                <Text style={styles.statValue}>{platformStats.mau.toLocaleString()}</Text>
+                <Text style={styles.statLabel}>Monthly (MAU)</Text>
+              </View>
+            </View>
+
+            {/* CONTENT STATS */}
+            <Text style={{color: '#fff', fontSize: 18, fontWeight: 'bold', marginTop: 20, marginBottom: 15}}>Content</Text>
+            <View style={styles.statsGrid}>
+              <View style={[styles.statCard, { width: '23%' }]}>
+                <Ionicons name="eye" size={24} color="#e50914" style={styles.statIcon} />
                 <Text style={styles.statValue}>{platformStats.totalViews.toLocaleString()}</Text>
                 <Text style={styles.statLabel}>Total Views</Text>
               </View>
               
-              <View style={styles.statCard}>
-                <Ionicons name="film" size={28} color="#e50914" style={styles.statIcon} />
+              <View style={[styles.statCard, { width: '23%' }]}>
+                <Ionicons name="film" size={24} color="#e50914" style={styles.statIcon} />
                 <Text style={styles.statValue}>{platformStats.totalMovies}</Text>
-                <Text style={styles.statLabel}>Active Movies</Text>
+                <Text style={styles.statLabel}>Movies</Text>
               </View>
 
-              <View style={styles.statCard}>
-                <Ionicons name="tv" size={28} color="#e50914" style={styles.statIcon} />
+              <View style={[styles.statCard, { width: '23%' }]}>
+                <Ionicons name="tv" size={24} color="#e50914" style={styles.statIcon} />
                 <Text style={styles.statValue}>{platformStats.totalSeries}</Text>
-                <Text style={styles.statLabel}>Active TV Series</Text>
+                <Text style={styles.statLabel}>TV Series</Text>
               </View>
 
-              <View style={styles.statCard}>
-                <Ionicons name="trophy" size={28} color="#f59e0b" style={styles.statIcon} />
+              <View style={[styles.statCard, { width: '23%' }]}>
+                <Ionicons name="trophy" size={24} color="#f59e0b" style={styles.statIcon} />
                 <Text style={[styles.statValue, {fontSize: 16}]} numberOfLines={1}>{platformStats.topCategory}</Text>
                 <Text style={styles.statLabel}>Top Category</Text>
               </View>
 
-              {/* Most Watched Title Card (Full Width) */}
               <View style={[styles.statCard, { width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 25, marginTop: 5, borderColor: '#eab308' }]}>
                  <View style={{ flex: 1, paddingRight: 10 }}>
                    <Text style={[styles.statValue, {fontSize: 22, color: '#eab308'}]} numberOfLines={1}>{platformStats.topTitle}</Text>
@@ -620,12 +637,6 @@ export default function AdminScreen() {
               )}
             </View>
 
-            <View style={styles.dashboardTipCard}>
-              <Ionicons name="information-circle" size={24} color="#666" />
-              <Text style={styles.dashboardTipText}>
-                Active users are people who have opened your app in the last 7 days. Views are automatically counted when a user watches a movie for more than 5 seconds.
-              </Text>
-            </View>
           </View>
         )}
 
@@ -912,12 +923,10 @@ const styles = StyleSheet.create({
   dashboardContainer: { paddingBottom: 20 },
   dashboardTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff' },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 15 },
-  statCard: { width: '47%', backgroundColor: '#111', padding: 20, borderRadius: 12, borderWidth: 1, borderColor: '#1f1f1f', alignItems: 'center', justifyContent: 'center' },
+  statCard: { backgroundColor: '#111', padding: 20, borderRadius: 12, borderWidth: 1, borderColor: '#1f1f1f', alignItems: 'center', justifyContent: 'center' },
   statIcon: { marginBottom: 10 },
   statValue: { fontSize: 28, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
   statLabel: { fontSize: 13, color: '#888', fontWeight: '600' },
-  dashboardTipCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', padding: 16, borderRadius: 10, marginTop: 20, borderWidth: 1, borderColor: '#2a2a2a', gap: 12 },
-  dashboardTipText: { flex: 1, color: '#aaa', fontSize: 13, lineHeight: 20 },
 
   // LEADERBOARD STYLES
   leaderboardSection: { marginTop: 30, backgroundColor: '#111', borderRadius: 12, padding: 20, borderWidth: 1, borderColor: '#1f1f1f' },
