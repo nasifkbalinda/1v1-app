@@ -125,7 +125,8 @@ export default function AdminScreen() {
     
     updateTask(taskId, { message: 'Connecting to Mux backend...' });
 
-    const backendRes = await fetch('https://1v1-app.pages.dev/api/mux', { 
+    // CHANGED BACK TO RELATIVE URL HERE
+    const backendRes = await fetch('/api/mux', { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({ subtitleUrl, passthrough }) 
@@ -198,7 +199,7 @@ export default function AdminScreen() {
             poster_url: posterUrl, 
             type: 'Movie', 
             category: cat, 
-            status: 'processing' // The Webhook will flip this to 'active' later
+            status: 'processing' 
         })
         .select('id')
         .single();
