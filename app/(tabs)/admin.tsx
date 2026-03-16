@@ -65,13 +65,15 @@ export default function AdminScreen() {
 
   const [statsLoading, setStatsLoading] = useState(false);
   
-  // ---> UPDATED: Added leaderboard array to our state <---
+  // ---> UPDATED: Added totalUsers and activeUsers to our state <---
   const [platformStats, setPlatformStats] = useState({
     totalViews: 0,
     totalMovies: 0,
     totalSeries: 0,
     topCategory: 'N/A',
     topTitle: 'No Views Yet',
+    totalUsers: 0,
+    activeUsers: 0,
     leaderboard: [] as any[]
   });
 
@@ -93,15 +95,15 @@ export default function AdminScreen() {
   const fetchDashboardStats = useCallback(async () => {
     setStatsLoading(true);
     try {
+      // 1. Fetch Content Stats
       const { count: movieCount } = await supabase.from('movies').select('*', { count: 'exact', head: true }).eq('type', 'Movie').eq('status', 'active');
       const { count: seriesCount } = await supabase.from('movies').select('*', { count: 'exact', head: true }).eq('type', 'TV Series').eq('status', 'active');
       
-      // We grab "type" now so we can label it in the leaderboard
+      // 2. Fetch View Stats & Leaderboard
       const { data: viewData } = await supabase.from('movies').select('id, title, views, category, type').eq('status', 'active');
       
       let totalViews = 0;
       const categoryCounts: Record<string, number> = {};
-      
       let topTitleName = 'No Views Yet';
       let highestViewCount = -1;
       let sortedLeaderboard: any[] = [];
@@ -121,7 +123,6 @@ export default function AdminScreen() {
           }
         });
 
-        // Sort the entire list from most views to least views
         sortedLeaderboard = [...viewData].sort((a, b) => (b.views || 0) - (a.views || 0));
       }
 
@@ -134,12 +135,24 @@ export default function AdminScreen() {
         }
       }
 
+      // ---> NEW: Fetch User Stats <---
+      // Get all-time users
+      const { count: totalUsersCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true });
+      
+      // Get users active in the last 7 days
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      const isoDate = sevenDaysAgo.toISOString();
+      const { count: activeUsersCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).gte('last_active', isoDate);
+
       setPlatformStats({
         totalMovies: movieCount || 0,
         totalSeries: seriesCount || 0,
         totalViews,
         topCategory: maxCatViews > 0 ? `${topCat} (${maxCatViews})` : 'Not enough data',
         topTitle: topTitleName,
+        totalUsers: totalUsersCount || 0,
+        activeUsers: activeUsersCount || 0,
         leaderboard: sortedLeaderboard
       });
 
@@ -533,6 +546,20 @@ export default function AdminScreen() {
             </View>
 
             <View style={styles.statsGrid}>
+              
+              {/* NEW: User Tracking Cards */}
+              <View style={[styles.statCard, { borderColor: '#10b981' }]}>
+                <Ionicons name="people" size={28} color="#10b981" style={styles.statIcon} />
+                <Text style={styles.statValue}>{platformStats.totalUsers.toLocaleString()}</Text>
+                <Text style={styles.statLabel}>Total Users</Text>
+              </View>
+
+              <View style={[styles.statCard, { borderColor: '#3b82f6' }]}>
+                <Ionicons name="pulse" size={28} color="#3b82f6" style={styles.statIcon} />
+                <Text style={styles.statValue}>{platformStats.activeUsers.toLocaleString()}</Text>
+                <Text style={styles.statLabel}>Active (7 Days)</Text>
+              </View>
+
               <View style={styles.statCard}>
                 <Ionicons name="eye" size={28} color="#e50914" style={styles.statIcon} />
                 <Text style={styles.statValue}>{platformStats.totalViews.toLocaleString()}</Text>
@@ -540,13 +567,13 @@ export default function AdminScreen() {
               </View>
               
               <View style={styles.statCard}>
-                <Ionicons name="film" size={28} color="#3b82f6" style={styles.statIcon} />
+                <Ionicons name="film" size={28} color="#e50914" style={styles.statIcon} />
                 <Text style={styles.statValue}>{platformStats.totalMovies}</Text>
                 <Text style={styles.statLabel}>Active Movies</Text>
               </View>
 
               <View style={styles.statCard}>
-                <Ionicons name="tv" size={28} color="#10b981" style={styles.statIcon} />
+                <Ionicons name="tv" size={28} color="#e50914" style={styles.statIcon} />
                 <Text style={styles.statValue}>{platformStats.totalSeries}</Text>
                 <Text style={styles.statLabel}>Active TV Series</Text>
               </View>
@@ -567,7 +594,7 @@ export default function AdminScreen() {
               </View>
             </View>
             
-            {/* ---> NEW: LEADERBOARD LIST <--- */}
+            {/* LEADERBOARD LIST */}
             <View style={styles.leaderboardSection}>
               <View style={{flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 15}}>
                  <Ionicons name="list" size={22} color="#fff" />
@@ -596,7 +623,7 @@ export default function AdminScreen() {
             <View style={styles.dashboardTipCard}>
               <Ionicons name="information-circle" size={24} color="#666" />
               <Text style={styles.dashboardTipText}>
-                Views are automatically counted when a user watches a movie for more than 5 seconds. Use this data to see what content your audience loves the most!
+                Active users are people who have opened your app in the last 7 days. Views are automatically counted when a user watches a movie for more than 5 seconds.
               </Text>
             </View>
           </View>
@@ -892,7 +919,7 @@ const styles = StyleSheet.create({
   dashboardTipCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', padding: 16, borderRadius: 10, marginTop: 20, borderWidth: 1, borderColor: '#2a2a2a', gap: 12 },
   dashboardTipText: { flex: 1, color: '#aaa', fontSize: 13, lineHeight: 20 },
 
-  // NEW: LEADERBOARD STYLES
+  // LEADERBOARD STYLES
   leaderboardSection: { marginTop: 30, backgroundColor: '#111', borderRadius: 12, padding: 20, borderWidth: 1, borderColor: '#1f1f1f' },
   leaderboardSectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff' },
   leaderboardRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#222' },
