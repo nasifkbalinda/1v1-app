@@ -11,7 +11,6 @@ const POSTER_HEIGHT = 160;
 const FEATURED_WIDTH = 380;
 const FEATURED_HEIGHT = 220;
 
-// Added "views" to the Movie type so our app knows how to read the new database column!
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; duration_seconds?: number | null; views?: number; };
 const FILTERS = ['All', 'Movies', 'TV Shows', 'Action', 'Comedy', 'Adventure', 'Sci-Fi'] as const;
 type Filter = (typeof FILTERS)[number];
@@ -30,6 +29,9 @@ export default function HomeScreen() {
   const isDesktop = width > 768;
 
   const [movies, setMovies] = useState<Movie[]>([]);
+  // ---> NEW STATE FOR CONTINUE WATCHING <---
+  const [continueWatching, setContinueWatching] = useState<any[]>([]);
+  
   const [loading, setLoading] = useState(true);
   const [moviesRefreshing, setMoviesRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -46,8 +48,10 @@ export default function HomeScreen() {
     try {
       if (isInitial) setLoading(true);
       else setMoviesRefreshing(true);
+      
       const baseQuery = supabase.from('movies').select('*').eq('status', 'active');
       const filteredQuery = applyActiveFilterToMoviesQuery(baseQuery, activeFilter).order('id', { ascending: false }); 
+      
       const { data, error } = await filteredQuery;
       if (error) throw error;
       setMovies(data ?? []);
@@ -60,23 +64,55 @@ export default function HomeScreen() {
     }
   };
 
-  useEffect(() => { fetchMovies(true); }, [activeFilter]);
-  const handleManualRefresh = () => { fetchMovies(false); };
+  // ---> NEW FUNCTION: Fetch User's Playback Progress <---
+  const fetchContinueWatching = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return; // If not logged in, just skip it
+
+      // Fetch the progress AND join it with the movie details automatically!
+      const { data, error } = await supabase
+        .from('playback_progress')
+        .select(`
+          timestamp_seconds,
+          updated_at,
+          movie_id,
+          movies (*)
+        `)
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false }) // Get the most recently watched first
+        .limit(10);
+
+      if (data && !error) {
+        // Filter out any broken links (e.g. if a movie was deleted but progress remained)
+        const validProgress = data.filter(item => item.movies !== null);
+        setContinueWatching(validProgress);
+      }
+    } catch (err) {
+      console.error('Error fetching continue watching:', err);
+    }
+  };
+
+  useEffect(() => { 
+    fetchMovies(true); 
+    fetchContinueWatching(); // Call our new function on load!
+  }, [activeFilter]);
+
+  const handleManualRefresh = () => { 
+    fetchMovies(false); 
+    fetchContinueWatching(); 
+  };
 
   const filteredMovies = useMemo(() => filterByQuery(movies, searchQuery), [movies, searchQuery]);
   
-  // Featured gets the absolute top 4 newest
   const featuredRowMovies = filteredMovies.slice(0, 4);
   
-  // ---> NEW: TRENDING MOVIES (Sorted by highest views) <---
   const trendingMovies = useMemo(() => {
-    // We make a copy of the array and sort it by the new views column, keeping the top 10
     return [...filteredMovies]
       .sort((a, b) => (b.views || 0) - (a.views || 0))
       .slice(0, 10);
   }, [filteredMovies]);
 
-  // Latest Uploads gets the top 12 newest
   const latestUploadsMovies = filteredMovies.slice(0, 12);
   
   const categoryOrder = ['Action', 'Adventure', 'Comedy', 'Drama'];
@@ -165,7 +201,37 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* --- NEW: TRENDING NOW SECTION --- */}
+          {/* --- NEW: CONTINUE WATCHING SECTION --- */}
+          {continueWatching.length > 0 && !searchQuery.trim() && (
+            <View style={styles.categorySection}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 8 }}>
+                 <Ionicons name="time" size={24} color="#e50914" />
+                 <Text style={[styles.sectionLabel, { marginBottom: 0 }]}>Continue Watching</Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
+                {continueWatching.map((item) => {
+                  const movie = item.movies;
+                  return (
+                    <Pressable key={`cw-${movie.id}`} style={styles.movieCard} onPress={() => router.push(`/movie/${movie.id}`)}>
+                      <Image source={{ uri: movie.poster_url || '' }} style={styles.moviePoster} resizeMode="cover" />
+                      
+                      {/* Cool overlay to indicate it's a "Resume" card */}
+                      <View style={styles.continueWatchingOverlay}>
+                        <Ionicons name="play-circle" size={36} color="rgba(255,255,255,0.8)" />
+                      </View>
+                      
+                      {/* Fake progress bar at the bottom for aesthetics */}
+                      <View style={styles.progressBarBackground}>
+                         <View style={styles.progressBarFill} /> 
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* --- TRENDING NOW SECTION --- */}
           {trendingMovies.length > 0 && !searchQuery.trim() && (
             <View style={styles.categorySection}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 8 }}>
@@ -252,6 +318,11 @@ const styles = StyleSheet.create({
   playButtonSmall: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 4, gap: 4 },
   playButtonTextSmall: { color: '#000', fontWeight: 'bold', fontSize: 12 },
   
-  movieCard: { width: POSTER_WIDTH, height: POSTER_HEIGHT, borderRadius: 8, overflow: 'hidden', backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#1f1f1f' },
+  movieCard: { width: POSTER_WIDTH, height: POSTER_HEIGHT, borderRadius: 8, overflow: 'hidden', backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#1f1f1f', position: 'relative' },
   moviePoster: { width: '100%', height: '100%' },
+  
+  // NEW CONTINUE WATCHING STYLES
+  continueWatchingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center' },
+  progressBarBackground: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 4, backgroundColor: '#333' },
+  progressBarFill: { width: '60%', height: '100%', backgroundColor: '#e50914' },
 });
