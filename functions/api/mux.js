@@ -26,7 +26,7 @@ export async function onRequest(context) {
       new_asset_settings: { 
         playback_policy: ['public'], 
         video_quality: 'basic', 
-        mp4_support: 'standard',
+        // Note: mp4_support was deleted here to fix the deprecation error!
         passthrough: body.passthrough || 'unknown'
       }, 
       cors_origin: '*' 
