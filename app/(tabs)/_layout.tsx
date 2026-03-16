@@ -47,14 +47,38 @@ export default function TabsLayout() {
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
+    // ---> NEW: SILENT ACTIVITY PING <---
+    const pingActiveStatus = async (user: any) => {
+      if (!user) return;
+      try {
+        // Update this user's 'last_active' timestamp to right now
+        await supabase
+          .from('profiles')
+          .update({ last_active: new Date().toISOString() })
+          .eq('id', user.id);
+      } catch (e) {
+        console.log("Ping failed silently", e);
+      }
+    };
+
     // 1. Check immediately when the app loads
     supabase.auth.getUser().then(({ data }) => {
-      setIsAdmin(data?.user?.email?.toLowerCase() === 'saifnasif1@gmail.com');
+      const user = data?.user;
+      if (user) {
+        setIsAdmin(user.email?.toLowerCase() === 'saifnasif1@gmail.com');
+        pingActiveStatus(user); // Fire the ping!
+      }
     });
 
     // 2. Actively listen for any Google Logins or Logouts in the background
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      setIsAdmin(session?.user?.email?.toLowerCase() === 'saifnasif1@gmail.com');
+      const user = session?.user;
+      setIsAdmin(user?.email?.toLowerCase() === 'saifnasif1@gmail.com');
+      
+      // If they just logged in, fire the ping!
+      if (event === 'SIGNED_IN' && user) {
+         pingActiveStatus(user);
+      }
     });
 
     // Cleanup listener when you close the app
