@@ -46,6 +46,7 @@ export default function AdminScreen() {
   const [tvSeriesUploading, setTvSeriesUploading] = useState(false);
 
   const [manageMovies, setManageMovies] = useState<any[]>([]);
+  const [trashedEpisodes, setTrashedEpisodes] = useState<any[]>([]); // NEW: Track trashed episodes
   const [manageLoading, setManageLoading] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -218,7 +219,6 @@ export default function AdminScreen() {
     
     updateTask(taskId, { message: 'Connecting to Mux backend...' });
 
-    // ---> MOBILE FIX: ABSOLUTE CLOUDFLARE URL <---
     const backendRes = await fetch('https://1v1-app.pages.dev/api/mux', { 
         method: 'POST', 
         headers: { 
@@ -250,7 +250,7 @@ export default function AdminScreen() {
       
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
-          updateTask(taskId, { status: 'done', progress: 100, message: 'Upload Complete! Movie will appear soon.' });
+          updateTask(taskId, { status: 'done', progress: 100, message: 'Upload Complete! Content will appear soon.' });
           resolve();
         } else { reject(new Error(`Video Data Upload Failed (${xhr.status})`)); }
       };
@@ -344,7 +344,7 @@ export default function AdminScreen() {
             season_number: seasonNum, 
             episode_number: episodeNum, 
             title: epTitle,
-            status: 'processing'
+            status: 'processing' 
         })
         .select('id')
         .single();
@@ -405,8 +405,14 @@ export default function AdminScreen() {
 
   const fetchAllMovies = useCallback(async () => {
     setManageLoading(true);
-    const { data } = await supabase.from('movies').select('*').order('title');
-    setManageMovies(data ?? []);
+    // Fetch Movies
+    const { data: moviesData } = await supabase.from('movies').select('*').order('title');
+    setManageMovies(moviesData ?? []);
+    
+    // Fetch Trashed Episodes to display in the Trash Tab
+    const { data: episodesData } = await supabase.from('episodes').select('*, movies(title)').eq('status', 'trash').order('season_number');
+    setTrashedEpisodes(episodesData ?? []);
+    
     setManageLoading(false);
   }, []);
 
@@ -477,16 +483,19 @@ export default function AdminScreen() {
 
     if (movie.type === 'TV Series') {
       setLoadingEpisodes(true);
-      const { data } = await supabase.from('episodes').select('*').eq('movie_id', movie.id).order('season_number').order('episode_number');
+      // ONLY pull non-trashed episodes into the editor
+      const { data } = await supabase.from('episodes').select('*').eq('movie_id', movie.id).neq('status', 'trash').order('season_number').order('episode_number');
       setEditEpisodes(data || []);
       setLoadingEpisodes(false);
     }
   };
 
+  // ---> MODIFIED: Soft Delete Episode <---
   const handleDeleteEpisode = async (epId: string) => {
-    if (Platform.OS === 'web' ? window.confirm("Delete episode?") : true) {
-      await supabase.from('episodes').delete().eq('id', epId);
+    if (Platform.OS === 'web' ? window.confirm("Move episode to trash?") : true) {
+      await supabase.from('episodes').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', epId);
       setEditEpisodes(prev => prev.filter(e => e.id !== epId));
+      fetchAllMovies(); // Refresh the trash arrays in the background
     }
   };
 
@@ -518,6 +527,22 @@ export default function AdminScreen() {
   const handleDeleteForeverMovie = async (id: string) => {
     if (Platform.OS === 'web' ? window.confirm("Delete forever?") : true) {
       setDeletingId(id); await supabase.from('movies').delete().eq('id', id); fetchAllMovies(); setDeletingId(null);
+    }
+  };
+
+  // ---> NEW: Individual Episode Restore & Hard Delete <---
+  const handleRestoreEpisode = async (id: string) => {
+    setUpdatingId(id); 
+    await supabase.from('episodes').update({ status: 'active', deleted_at: null }).eq('id', id); 
+    fetchAllMovies(); 
+    setUpdatingId(null); 
+  };
+  const handleDeleteForeverEpisode = async (id: string) => {
+    if (Platform.OS === 'web' ? window.confirm("Delete episode forever?") : true) {
+      setDeletingId(id); 
+      await supabase.from('episodes').delete().eq('id', id); 
+      fetchAllMovies(); 
+      setDeletingId(null);
     }
   };
 
@@ -828,19 +853,46 @@ export default function AdminScreen() {
             )}
 
             {manageLoading ? <ActivityIndicator color="#e50914" /> : (
-              trashedMovies.length === 0 ? <Text style={styles.label}>Trash is empty.</Text> :
-              trashedMovies.map(m => (
-                <View key={m.id} style={styles.manageItem}>
-                  <Pressable style={styles.checkboxZone} onPress={() => toggleTrashSelection(m.id)}>
-                    <Ionicons name={selectedTrashIds.includes(m.id) ? "checkbox" : "square-outline"} size={22} color={selectedTrashIds.includes(m.id) ? "#e50914" : "#666"} />
-                  </Pressable>
-                  <View style={styles.manageInfo}><Text style={styles.manageTitle}>{m.title}</Text></View>
-                  <View style={styles.manageActions}>
-                    <Pressable style={[styles.manageButton, styles.manageButtonRestore]} onPress={() => handleRestoreMovie(m.id)}>{updatingId === m.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Restore</Text>}</Pressable>
-                    <Pressable style={[styles.manageButton, styles.manageButtonTrash]} onPress={() => handleDeleteForeverMovie(m.id)}>{deletingId === m.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Delete</Text>}</Pressable>
+              <>
+                {trashedMovies.length === 0 && trashedEpisodes.length === 0 && (
+                  <Text style={styles.label}>Trash is empty.</Text>
+                )}
+                
+                {/* Trashed Movies List */}
+                {trashedMovies.map(m => (
+                  <View key={`movie-${m.id}`} style={styles.manageItem}>
+                    <Pressable style={styles.checkboxZone} onPress={() => toggleTrashSelection(m.id)}>
+                      <Ionicons name={selectedTrashIds.includes(m.id) ? "checkbox" : "square-outline"} size={22} color={selectedTrashIds.includes(m.id) ? "#e50914" : "#666"} />
+                    </Pressable>
+                    <View style={styles.manageInfo}>
+                      <Text style={styles.manageTitle}>{m.title}</Text>
+                      <Text style={styles.manageMeta}>{m.type}</Text>
+                    </View>
+                    <View style={styles.manageActions}>
+                      <Pressable style={[styles.manageButton, styles.manageButtonRestore]} onPress={() => handleRestoreMovie(m.id)}>{updatingId === m.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Restore</Text>}</Pressable>
+                      <Pressable style={[styles.manageButton, styles.manageButtonTrash]} onPress={() => handleDeleteForeverMovie(m.id)}>{deletingId === m.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Delete</Text>}</Pressable>
+                    </View>
                   </View>
-                </View>
-              ))
+                ))}
+
+                {/* NEW: Trashed Episodes List */}
+                {trashedEpisodes.map(ep => (
+                  <View key={`ep-${ep.id}`} style={[styles.manageItem, { borderColor: '#444' }]}>
+                    <View style={{ padding: 5, marginRight: 8 }}>
+                       {/* Hiding the checkbox for episodes to keep bulk actions simple for movies only */}
+                       <Ionicons name="tv-outline" size={22} color="#888" />
+                    </View>
+                    <View style={styles.manageInfo}>
+                      <Text style={styles.manageTitle}>{ep.title}</Text>
+                      <Text style={styles.manageMeta}>Episode • {ep.movies?.title} (S{ep.season_number} E{ep.episode_number})</Text>
+                    </View>
+                    <View style={styles.manageActions}>
+                      <Pressable style={[styles.manageButton, styles.manageButtonRestore]} onPress={() => handleRestoreEpisode(ep.id)}>{updatingId === ep.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Restore</Text>}</Pressable>
+                      <Pressable style={[styles.manageButton, styles.manageButtonTrash]} onPress={() => handleDeleteForeverEpisode(ep.id)}>{deletingId === ep.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Delete</Text>}</Pressable>
+                    </View>
+                  </View>
+                ))}
+              </>
             )}
           </View>
         )}
