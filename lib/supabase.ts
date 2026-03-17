@@ -10,12 +10,10 @@ const isWeb = Platform.OS === 'web';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    // Web uses standard browser localStorage automatically [cite: 5, 8]
-    // Native uses AsyncStorage to survive app restarts [cite: 8]
+    // Web uses browser localStorage; Android uses AsyncStorage 
     storage: isWeb ? undefined : AsyncStorage,
     autoRefreshToken: true,
     persistSession: true,
-    // Web detects tokens in URL; Native is handled manually via setSession [cite: 8, 9]
     detectSessionInUrl: isWeb, 
   },
 });
