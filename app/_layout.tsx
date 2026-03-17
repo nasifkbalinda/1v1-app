@@ -1,39 +1,47 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
+import { Session } from '@supabase/supabase-js';
+import { Stack, useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
-// Keep the splash screen visible 
-SplashScreen.preventAutoHideAsync();
-
 export default function RootLayout() {
-  // Use ...Ionicons.font to register the correct internal mappings [cite: 6, 21]
-  const [fontsLoaded, fontError] = useFonts({
-    ...Ionicons.font,
-    'Ionicons': require('../public/fonts/Ionicons.ttf'),
-  });
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState<Session | null>(null);
 
   useEffect(() => {
-    if (fontsLoaded || fontError) {
-      // Only hide the splash screen when fonts are 100% ready [cite: 7, 21]
-      SplashScreen.hideAsync();
-    }
-  }, [fontsLoaded, fontError]);
+    // 1. Initial check for existing session on startup [cite: 23]
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setLoading(false);
+    });
 
-  // Fallback loading state
-  if (!fontsLoaded && !fontError) {
+    // 2. Listen for auth changes [cite: 23]
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setLoading(false);
+      
+      // Auto-route based on login status
+      if (session) router.replace('/(tabs)');
+      else router.replace('/login');
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#0a0a0a', justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator color="#e50914" size="large" />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
+        <ActivityIndicator size="large" color="#e50914" />
       </View>
     );
   }
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="login" />
+      <Stack.Screen name="auth/callback" />
+      <Stack.Screen name="(tabs)" />
     </Stack>
   );
 }
