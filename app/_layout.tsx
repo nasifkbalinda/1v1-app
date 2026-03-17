@@ -1,47 +1,64 @@
 import { supabase } from '@/lib/supabase';
+import { Ionicons } from '@expo/vector-icons';
+import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
+
+// Keep the splash screen visible while everything loads
+SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
-  const [loading, setLoading] = useState(true);
+  
+  // 1. FONT LOADING LOGIC (From your old code)
+  const [fontsLoaded, fontError] = useFonts({
+    ...Ionicons.font,
+  });
+
+  // 2. AUTH SESSION LOGIC (From our new fix)
+  const [authLoading, setAuthLoading] = useState(true);
   const [session, setSession] = useState<any>(null);
 
   useEffect(() => {
-    // Check session on app mount 
+    // Check session on app start
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      setLoading(false);
+      setAuthLoading(false);
     });
 
-    // Listen for sign-in/sign-out events [cite: 23, 24]
+    // Listen for sign-in/sign-out events
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      setLoading(false);
+      setAuthLoading(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
+  // 3. NAVIGATION GUARD
   useEffect(() => {
-    if (loading) return;
+    if (authLoading || !fontsLoaded) return;
 
     const inAuthGroup = segments[0] === '(tabs)';
 
-    // Pure persistence logic: if no session and trying to access tabs, go to login [cite: 27]
     if (!session && inAuthGroup) {
       router.replace('/login');
     } else if (session && !inAuthGroup) {
       router.replace('/(tabs)');
     }
-  }, [session, loading, segments]);
+    
+    // Hide splash screen once fonts AND auth are ready
+    SplashScreen.hideAsync();
+  }, [session, authLoading, fontsLoaded, segments]);
 
-  if (loading) {
+  // 4. LOADING SCREEN (Wait for Fonts + Auth)
+  if (!fontsLoaded && !fontError || authLoading) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', backgroundColor: '#000' }}>
-        <ActivityIndicator size="large" color="#e50914" />
+      <View style={{ flex: 1, backgroundColor: '#0a0a0a', justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator color="#e50914" size="large" />
       </View>
     );
   }
