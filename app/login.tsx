@@ -18,13 +18,6 @@ export default function LoginScreen() {
   const [username, setUsername] = useState(''); 
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false); 
-  
-  const [debugLog, setDebugLog] = useState<string>('Awaiting Web Auth...');
-
-  const appendLog = (msg: string) => {
-    setDebugLog(prev => prev + '\n-> ' + msg);
-    console.log("DEBUG:", msg);
-  };
 
   const showAlert = (title: string, message: string) => {
     if (Platform.OS === 'web') window.alert(`${title}: ${message}`);
@@ -32,41 +25,9 @@ export default function LoginScreen() {
   };
 
   useEffect(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      appendLog(`Current URL: ${window.location.href}`);
-      
-      const url = window.location.href;
-      if (url.includes('access_token') && url.includes('refresh_token')) {
-        appendLog('Tokens found in URL! Processing...');
-        
-        const getParam = (stringUrl: string, key: string) => {
-          const match = stringUrl.match(new RegExp('[#?&]' + key + '=([^&]+)'));
-          return match ? match[1] : null;
-        };
-        
-        const access_token = getParam(url, 'access_token');
-        const refresh_token = getParam(url, 'refresh_token');
-        
-        if (access_token && refresh_token) {
-          // Force Supabase to log in immediately
-          supabase.auth.setSession({ access_token, refresh_token }).then(({ error }) => {
-            if (error) {
-              appendLog(`Session Error: ${error.message}`);
-            } else {
-              appendLog('Session set successfully. Routing to tabs...');
-              window.history.replaceState({}, document.title, window.location.pathname);
-              router.replace('/(tabs)');
-            }
-          });
-        }
-      }
-    }
-
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      appendLog(`Supabase Event Fired: ${event}`);
       if (event === 'PASSWORD_RECOVERY') setMode('update');
       if (event === 'SIGNED_IN') {
-        appendLog('SIGNED_IN event detected. Routing to Tabs...');
         router.replace('/(tabs)'); 
       }
     });
@@ -92,22 +53,15 @@ export default function LoginScreen() {
   const handleGoogleLogin = async () => {
     try {
       setLoading(true);
-      appendLog('Google Button Clicked');
       
-      // ---> THE FIX: SEND GOOGLE TO THE LOGIN PAGE <---
+      // ---> THE REAL WEB FIX: Let Supabase handle everything automatically <---
       if (Platform.OS === 'web') {
-        const redirectTarget = window.location.origin + '/login'; // explicitly target the login route
-        appendLog(`Telling Google to return to: ${redirectTarget}`);
-        
-        const { error } = await supabase.auth.signInWithOAuth({ 
-          provider: 'google',
-          options: { redirectTo: redirectTarget }
-        });
+        const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
         if (error) throw error;
         return;
       }
 
-      // Native App logic remains exactly the same
+      // ---> NATIVE ANDROID/IOS REDIRECT (Unchanged) <---
       const redirectTo = makeRedirectUri({ scheme: 'v1app' }); 
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -135,8 +89,7 @@ export default function LoginScreen() {
         }
       }
     } catch (error: any) {
-      appendLog(`ERROR: ${error.message}`);
-      showAlert("Error", error.message);
+      showAlert("Error", error.message || "Something went wrong.");
     } finally {
       setLoading(false);
     }
@@ -172,14 +125,6 @@ export default function LoginScreen() {
              {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.googleButtonText}>Continue with Google</Text>}
           </TouchableOpacity>
         )}
-
-        {Platform.OS === 'web' && (
-          <View style={styles.debugBox}>
-            <Text style={styles.debugTitle}>System Logs</Text>
-            <Text style={styles.debugText}>{debugLog}</Text>
-          </View>
-        )}
-
       </View>
     </ScrollView>
   );
@@ -198,8 +143,5 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: '#e50914', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 10 },
   buttonText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
   googleButton: { backgroundColor: '#fff', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 30 },
-  googleButtonText: { color: '#000', fontWeight: 'bold' },
-  debugBox: { marginTop: 40, padding: 15, backgroundColor: '#111', borderRadius: 8, borderWidth: 1, borderColor: '#e50914' },
-  debugTitle: { color: '#e50914', fontWeight: 'bold', marginBottom: 10, fontSize: 12 },
-  debugText: { color: '#00ff00', fontFamily: 'monospace', fontSize: 10, lineHeight: 16 }
+  googleButtonText: { color: '#000', fontWeight: 'bold' }
 });

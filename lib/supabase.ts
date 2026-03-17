@@ -11,27 +11,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-// ---> THE MEMORY FIX <---
-// Explicitly teach Web how to use its own storage, and Native to use AsyncStorage
-const webStorage = {
-  getItem: (key: string) => {
-    if (typeof window !== 'undefined') return window.localStorage.getItem(key);
-    return null;
-  },
-  setItem: (key: string, value: string) => {
-    if (typeof window !== 'undefined') window.localStorage.setItem(key, value);
-  },
-  removeItem: (key: string) => {
-    if (typeof window !== 'undefined') window.localStorage.removeItem(key);
-  },
-};
-
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    // Force the correct storage mechanism based on the platform
-    storage: Platform.OS === 'web' ? webStorage : AsyncStorage,
+    // THIS IS THE KEY: We let Supabase use its own native web storage
+    storage: Platform.OS !== 'web' ? AsyncStorage : undefined, 
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: true,
+    detectSessionInUrl: true, // Let Supabase read the URL itself
   },
 });
