@@ -65,7 +65,6 @@ export default function AdminScreen() {
 
   const [statsLoading, setStatsLoading] = useState(false);
   
-  // ---> UPDATED: Added DAU, WAU, and MAU <---
   const [platformStats, setPlatformStats] = useState({
     totalViews: 0,
     totalMovies: 0,
@@ -97,11 +96,9 @@ export default function AdminScreen() {
   const fetchDashboardStats = useCallback(async () => {
     setStatsLoading(true);
     try {
-      // 1. Fetch Content Stats
       const { count: movieCount } = await supabase.from('movies').select('*', { count: 'exact', head: true }).eq('type', 'Movie').eq('status', 'active');
       const { count: seriesCount } = await supabase.from('movies').select('*', { count: 'exact', head: true }).eq('type', 'TV Series').eq('status', 'active');
       
-      // 2. Fetch View Stats & Leaderboard
       const { data: viewData } = await supabase.from('movies').select('id, title, views, category, type').eq('status', 'active');
       
       let totalViews = 0;
@@ -137,7 +134,6 @@ export default function AdminScreen() {
         }
       }
 
-      // 3. Fetch User Activity Stats
       const now = new Date();
       const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
       const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -222,7 +218,8 @@ export default function AdminScreen() {
     
     updateTask(taskId, { message: 'Connecting to Mux backend...' });
 
-    const backendRes = await fetch('/api/mux', { 
+    // ---> MOBILE FIX: ABSOLUTE CLOUDFLARE URL <---
+    const backendRes = await fetch('https://1v1-app.pages.dev/api/mux', { 
         method: 'POST', 
         headers: { 
           'Content-Type': 'application/json',
@@ -550,7 +547,7 @@ export default function AdminScreen() {
               </Pressable>
             </View>
 
-            {/* AUDIENCE STATS (The New Stuff) */}
+            {/* AUDIENCE STATS */}
             <Text style={{color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 15}}>Audience</Text>
             <View style={styles.statsGrid}>
               <View style={[styles.statCard, { width: '23%', borderColor: '#6b7280' }]}>
