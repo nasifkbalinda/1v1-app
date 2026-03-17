@@ -487,9 +487,20 @@ export default function AdminScreen() {
     }
   };
 
+  // ---> UPDATED: Safe "Pessimistic" Episode Delete <---
   const handleDeleteEpisode = async (epId: string) => {
     if (Platform.OS === 'web' ? window.confirm("Move episode to trash?") : true) {
-      await supabase.from('episodes').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', epId);
+      // 1. Tell the DB to trash it first
+      const { error } = await supabase.from('episodes').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', epId);
+      
+      // 2. If the DB blocks it, show the error and stop the function
+      if (error) {
+        if (Platform.OS === 'web') window.alert("Failed to trash episode: " + error.message);
+        else Alert.alert("Error", error.message);
+        return; 
+      }
+      
+      // 3. Only hide it from the UI if the DB succeeded
       setEditEpisodes(prev => prev.filter(e => e.id !== epId));
       fetchAllMovies();
     }
@@ -510,7 +521,6 @@ export default function AdminScreen() {
     fetchAllMovies();
   };
 
-  // ---> UPDATED: Error Logging for Bulk Delete <---
   const handleBulkDeleteForever = async () => {
     if (Platform.OS === 'web' ? window.confirm("Delete forever?") : true) {
       const { error } = await supabase.from('movies').delete().in('id', selectedTrashIds);
@@ -526,7 +536,6 @@ export default function AdminScreen() {
   const handleTrashMovie = async (id: string) => { setUpdatingId(id); await supabase.from('movies').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', id); fetchAllMovies(); setUpdatingId(null); };
   const handleRestoreMovie = async (id: string) => { setUpdatingId(id); await supabase.from('movies').update({ status: 'active', deleted_at: null }).eq('id', id); fetchAllMovies(); setUpdatingId(null); };
   
-  // ---> UPDATED: Error Logging for Single Movie Delete <---
   const handleDeleteForeverMovie = async (id: string) => {
     if (Platform.OS === 'web' ? window.confirm("Delete forever?") : true) {
       setDeletingId(id); 
@@ -547,7 +556,6 @@ export default function AdminScreen() {
     setUpdatingId(null); 
   };
 
-  // ---> UPDATED: Error Logging for Single Episode Delete <---
   const handleDeleteForeverEpisode = async (id: string) => {
     if (Platform.OS === 'web' ? window.confirm("Delete episode forever?") : true) {
       setDeletingId(id); 

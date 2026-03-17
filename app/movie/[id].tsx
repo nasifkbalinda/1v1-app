@@ -76,7 +76,6 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
   const playerError = statusEvent?.error;
   const [hasSeeked, setHasSeeked] = useState(false);
   
-  // NEW: Ref to ensure we only count 1 view per playback session
   const hasCountedView = useRef(false);
 
   useEffect(() => { 
@@ -99,15 +98,11 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
   const handleProgress = useCallback((currentTime: number) => {
     if (!userId || !movieId || currentTime < 5) return;
 
-    // ---> NEW: STAT TRACKER (Add +1 View) <---
-    // If they watch more than 5 seconds, register it as a solid "View"
     if (!hasCountedView.current) {
       hasCountedView.current = true;
       supabase.rpc('increment_view_count', { row_id: movieId }).then();
-      console.log("View Logged for Movie ID:", movieId);
     }
 
-    // Save Resume Progress (Every 10 seconds)
     const now = Date.now();
     if (now - lastUpdateRef.current > 10000) { 
       supabase.from('playback_progress').upsert(
@@ -226,7 +221,14 @@ export default function TheaterScreen() {
     let isCancelled = false;
     async function fetchEpisodes() {
       try {
-        const { data } = await supabase.from('episodes').select('*').eq('movie_id', movie.id).order('season_number', { ascending: true }).order('episode_number', { ascending: true });
+        const { data } = await supabase
+          .from('episodes')
+          .select('*')
+          .eq('movie_id', movie.id)
+          .eq('status', 'active') 
+          .order('season_number', { ascending: true })
+          .order('episode_number', { ascending: true });
+        
         if (!isCancelled) setEpisodes((data as Episode[]) ?? []);
       } catch (err) { if (!isCancelled) setEpisodes([]); }
     }
@@ -251,7 +253,14 @@ export default function TheaterScreen() {
     if (!movie || !movie.category || isOfflineMode) return;
     async function fetchSimilar() {
       try {
-        const { data } = await supabase.from('movies').select('*').eq('category', movie.category).neq('id', movie.id).limit(6);
+        const { data } = await supabase
+          .from('movies')
+          .select('*')
+          .eq('category', movie.category)
+          .eq('status', 'active') 
+          .neq('id', movie.id)
+          .limit(6);
+          
         setSimilarMovies(data as Movie[] ?? []);
       } catch (err) { setSimilarMovies([]); }
     }
@@ -280,12 +289,17 @@ export default function TheaterScreen() {
     setIsPlaying(true);
   };
 
+  // ---> UPDATED MUX MP4 DOWNLOADER <---
   const downloadVideo = useCallback(
     async (videoUrl: string, title: string) => {
       if (!movie || isOfflineMode || !videoUrl || isDownloading || isDownloaded) return;
       if (!userId) { router.push('/settings'); return; }
 
-      const mp4Url = videoUrl;
+      let mp4Url = videoUrl;
+      // Convert Mux HLS playlist directly to a high quality MP4
+      if (videoUrl.includes('stream.mux.com') && videoUrl.endsWith('.m3u8')) {
+        mp4Url = videoUrl.replace('.m3u8', '/high.mp4'); 
+      }
 
       if (Platform.OS === 'web') {
         if (typeof window !== 'undefined') window.alert("Downloads are currently disabled on Web for streaming assets.");
@@ -313,7 +327,12 @@ export default function TheaterScreen() {
           await FileSystem.deleteAsync(fileUri, { idempotent: true });
           Alert.alert('Download Failed', 'Could not fetch media file.');
         }
-      } catch (err) { Alert.alert('Download Failed', 'Check your network connection and try again.'); } finally { setIsDownloading(false); setDownloadProgress(null); }
+      } catch (err) { 
+        Alert.alert('Download Failed', 'Check your network connection and try again.'); 
+      } finally { 
+        setIsDownloading(false); 
+        setDownloadProgress(null); 
+      }
     },
     [movie, isOfflineMode, isDownloading, isDownloaded, userId, router]
   );

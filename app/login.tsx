@@ -1,8 +1,15 @@
+import { makeRedirectUri } from 'expo-auth-session';
+import { useRouter } from 'expo-router'; // ---> NEW: Added Router <---
+import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../lib/supabase';
 
+WebBrowser.maybeCompleteAuthSession();
+
 export default function LoginScreen() {
+  const router = useRouter(); // ---> NEW: Initialize Router <---
+  
   const [mode, setMode] = useState<'login' | 'signup' | 'forgot' | 'update'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -19,9 +26,13 @@ export default function LoginScreen() {
       if (event === 'PASSWORD_RECOVERY') {
         setMode('update');
       }
+      // Optional: Auto-redirect if they are already logged in when the app opens
+      if (event === 'SIGNED_IN') {
+         router.replace('/(tabs)'); 
+      }
     });
     return () => { authListener.subscription.unsubscribe(); };
-  }, []);
+  }, [router]);
 
   const handleEmailAuth = async () => {
     if (!email || !password) return showAlert("Error", "Please fill in all required fields");
@@ -35,11 +46,19 @@ export default function LoginScreen() {
         password,
         options: { data: { username: username } }
       });
-      if (error) showAlert("Error", error.message);
-      else showAlert("Success", "Account created! Check your email for the confirmation link.");
+      if (error) {
+        showAlert("Error", error.message);
+      } else {
+        showAlert("Success", "Account created! Check your email for the confirmation link.");
+      }
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) showAlert("Error", error.message);
+      if (error) {
+        showAlert("Error", error.message);
+      } else {
+        // ---> NEW: Navigate to the Home Screen on success! <---
+        router.replace('/(tabs)');
+      }
     }
     
     setLoading(false);
@@ -73,18 +92,46 @@ export default function LoginScreen() {
 
   const handleGoogleLogin = async () => {
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
+      setLoading(true);
+      
+      if (Platform.OS === 'web') {
+        const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
+        if (error) throw error;
+        return;
+      }
+
+      // ---> NEW: Explicitly force the 'v1app' scheme so the browser knows where to go <---
+      const redirectTo = makeRedirectUri({ scheme: 'v1app' }); 
+      
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
+        options: {
+          redirectTo,
+          skipBrowserRedirect: true,
+        },
       });
+
       if (error) throw error;
+
+      if (data?.url) {
+        const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+        
+        if (res.type === 'success') {
+          const { url } = res;
+          await supabase.auth.getSessionFromUrl(url);
+          // ---> NEW: Navigate to the Home Screen on success! <---
+          router.replace('/(tabs)');
+        }
+      }
     } catch (error: any) {
       showAlert("Error", error.message);
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <View style={styles.container}>
-      {/* ---> NEW: CENTER BOX FOR DESKTOP OPTIMIZATION <--- */}
       <View style={styles.centerBox}>
         <Text style={styles.logo}>V</Text>
         
@@ -133,8 +180,8 @@ export default function LoginScreen() {
               <View style={styles.line} /><Text style={styles.dividerText}>OR</Text><View style={styles.line} />
             </View>
 
-            <TouchableOpacity style={styles.googleButton} onPress={handleGoogleLogin}>
-              <Text style={styles.googleButtonText}>Continue with Google</Text>
+            <TouchableOpacity style={styles.googleButton} onPress={handleGoogleLogin} disabled={loading}>
+               {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.googleButtonText}>Continue with Google</Text>}
             </TouchableOpacity>
           </>
         )}
@@ -153,7 +200,6 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000', justifyContent: 'center', padding: 30 },
-  // ---> THE MAGIC DESKTOP WRAPPER <---
   centerBox: { width: '100%', maxWidth: 400, alignSelf: 'center' },
   logo: { color: '#e50914', fontSize: 60, fontWeight: '900', textAlign: 'center', marginBottom: 10 },
   title: { color: '#fff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 40 },
