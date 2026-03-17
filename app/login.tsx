@@ -18,7 +18,6 @@ export default function LoginScreen() {
   const [username, setUsername] = useState(''); 
   const [loading, setLoading] = useState(false);
   
-  // ---> NEW: Show Password State <---
   const [showPassword, setShowPassword] = useState(false); 
 
   const showAlert = (title: string, message: string) => {
@@ -55,7 +54,6 @@ export default function LoginScreen() {
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) showAlert("Error", error.message);
-      else router.replace('/(tabs)');
     }
     
     setLoading(false);
@@ -87,24 +85,25 @@ export default function LoginScreen() {
     setLoading(false);
   };
 
-  // ---> UPDATED: Bulletproof Native Google OAuth Parsing <---
   const handleGoogleLogin = async () => {
     try {
       setLoading(true);
       
+      // ---> THE FIX: Exact rollback to how Web worked originally <---
       if (Platform.OS === 'web') {
         const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
         if (error) throw error;
         return;
       }
 
+      // ---> NATIVE ANDROID/IOS LOGIC REMAINS UNTOUCHED <---
       const redirectTo = makeRedirectUri({ scheme: 'v1app' }); 
       
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo,
-          skipBrowserRedirect: true,
+          skipBrowserRedirect: true, 
         },
       });
 
@@ -114,7 +113,6 @@ export default function LoginScreen() {
         const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
         
         if (res.type === 'success') {
-          // Use Expo Linking to safely parse the URL instead of Regex
           const parsedUrl = Linking.parse(res.url);
           const params = parsedUrl.queryParams || {};
           const fragment = parsedUrl.fragment || '';
@@ -123,15 +121,14 @@ export default function LoginScreen() {
              await supabase.auth.exchangeCodeForSession(String(params.code));
              router.replace('/(tabs)');
           } else {
-             // Fallback for implicit flow
              const access_match = fragment.match(/access_token=([^&]+)/);
              const refresh_match = fragment.match(/refresh_token=([^&]+)/);
              
              if (access_match && refresh_match) {
-                 await supabase.auth.setSession({ access_token: access_match[1], refresh_token: refresh_match[1] });
-                 router.replace('/(tabs)');
+                 const { error: sessionError } = await supabase.auth.setSession({ access_token: access_match[1], refresh_token: refresh_match[1] });
+                 if (sessionError) throw sessionError;
              } else {
-                 throw new Error("Could not parse authentication tokens from Google.");
+                 showAlert("Login Error", "Authentication tokens were not returned from Google.");
              }
           }
         }
@@ -162,7 +159,6 @@ export default function LoginScreen() {
             <TextInput placeholder="Email" placeholderTextColor="#666" style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
           )}
           
-          {/* ---> NEW: Show Password Toggle UI <--- */}
           {mode !== 'forgot' && (
             <View style={styles.passwordContainer}>
               <TextInput 
@@ -232,7 +228,6 @@ const styles = StyleSheet.create({
   inputContainer: { gap: 15 },
   input: { backgroundColor: '#1a1a1a', color: '#fff', padding: 15, borderRadius: 8, borderWidth: 1, borderColor: '#333' },
   
-  // ---> NEW STYLES FOR PASSWORD TOGGLE <---
   passwordContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', borderRadius: 8, borderWidth: 1, borderColor: '#333' },
   passwordInput: { flex: 1, color: '#fff', padding: 15 },
   eyeIcon: { paddingHorizontal: 15 },

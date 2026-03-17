@@ -11,15 +11,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-// ---> NEW: Native Secure Storage Adapter <---
-// If we are on web, use standard localStorage. If on a phone, use the secure AsyncStorage.
-const storageAdapter = Platform.OS === 'web' ? undefined : AsyncStorage;
-
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: storageAdapter,
+    // ---> THE FIX: Only apply AsyncStorage on Mobile. Let Web behave exactly as it did originally. <---
+    ...(Platform.OS !== 'web' ? { storage: AsyncStorage } : {}),
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: false,
+    detectSessionInUrl: true, // Turned back on globally!
   },
 });
