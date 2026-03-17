@@ -17,7 +17,6 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState(''); 
   const [loading, setLoading] = useState(false);
-  
   const [showPassword, setShowPassword] = useState(false); 
 
   const showAlert = (title: string, message: string) => {
@@ -26,14 +25,36 @@ export default function LoginScreen() {
   };
 
   useEffect(() => {
+    // ---> THE WEB RESCUE SQUAD <---
+    // This intercepts the tokens on the web BEFORE Expo Router deletes them!
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const url = window.location.href;
+      if (url.includes('access_token') && url.includes('refresh_token')) {
+        const getParam = (stringUrl: string, key: string) => {
+          const match = stringUrl.match(new RegExp('[#?&]' + key + '=([^&]+)'));
+          return match ? match[1] : null;
+        };
+        
+        const access_token = getParam(url, 'access_token');
+        const refresh_token = getParam(url, 'refresh_token');
+        
+        if (access_token && refresh_token) {
+          console.log("Tokens successfully rescued from Web URL!");
+          // Force Supabase to log in immediately
+          supabase.auth.setSession({ access_token, refresh_token }).then(() => {
+            // Clean up the browser URL so it looks professional
+            window.history.replaceState({}, document.title, window.location.pathname);
+            router.replace('/(tabs)');
+          });
+        }
+      }
+    }
+
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        setMode('update');
-      }
-      if (event === 'SIGNED_IN') {
-         router.replace('/(tabs)'); 
-      }
+      if (event === 'PASSWORD_RECOVERY') setMode('update');
+      if (event === 'SIGNED_IN') router.replace('/(tabs)'); 
     });
+    
     return () => { authListener.subscription.unsubscribe(); };
   }, [router]);
 
@@ -45,9 +66,7 @@ export default function LoginScreen() {
     
     if (mode === 'signup') {
       const { error } = await supabase.auth.signUp({ 
-        email, 
-        password,
-        options: { data: { username: username } }
+        email, password, options: { data: { username: username } }
       });
       if (error) showAlert("Error", error.message);
       else showAlert("Success", "Account created! Check your email for the confirmation link.");
@@ -78,9 +97,7 @@ export default function LoginScreen() {
     if (error) showAlert("Error", error.message);
     else {
       showAlert("Success", "Your password has been updated! You can now log in normally.");
-      setMode('login');
-      setPassword('');
-      setEmail('');
+      setMode('login'); setPassword(''); setEmail('');
     }
     setLoading(false);
   };
@@ -89,22 +106,24 @@ export default function LoginScreen() {
     try {
       setLoading(true);
       
-      // ---> THE FIX: Exact rollback to how Web worked originally <---
+      // ---> EXPLICIT CLOUDFLARE WEB REDIRECT <---
       if (Platform.OS === 'web') {
-        const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
+        const { error } = await supabase.auth.signInWithOAuth({ 
+          provider: 'google',
+          options: {
+            redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+          }
+        });
         if (error) throw error;
         return;
       }
 
-      // ---> NATIVE ANDROID/IOS LOGIC REMAINS UNTOUCHED <---
+      // ---> NATIVE ANDROID/IOS REDIRECT <---
       const redirectTo = makeRedirectUri({ scheme: 'v1app' }); 
       
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: {
-          redirectTo,
-          skipBrowserRedirect: true, 
-        },
+        options: { redirectTo, skipBrowserRedirect: true },
       });
 
       if (error) throw error;
@@ -227,11 +246,9 @@ const styles = StyleSheet.create({
   title: { color: '#fff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 40 },
   inputContainer: { gap: 15 },
   input: { backgroundColor: '#1a1a1a', color: '#fff', padding: 15, borderRadius: 8, borderWidth: 1, borderColor: '#333' },
-  
   passwordContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', borderRadius: 8, borderWidth: 1, borderColor: '#333' },
   passwordInput: { flex: 1, color: '#fff', padding: 15 },
   eyeIcon: { paddingHorizontal: 15 },
-  
   primaryButton: { backgroundColor: '#e50914', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 10 },
   buttonText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
   forgotButton: { alignSelf: 'flex-end', marginTop: 10 },
