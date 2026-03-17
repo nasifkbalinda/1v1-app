@@ -4,7 +4,7 @@ import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../lib/supabase';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -18,6 +18,14 @@ export default function LoginScreen() {
   const [username, setUsername] = useState(''); 
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false); 
+  
+  // ---> NEW: ON-SCREEN DEBUGGER <---
+  const [debugLog, setDebugLog] = useState<string>('Awaiting Web Auth...');
+
+  const appendLog = (msg: string) => {
+    setDebugLog(prev => prev + '\n-> ' + msg);
+    console.log("DEBUG:", msg);
+  };
 
   const showAlert = (title: string, message: string) => {
     if (Platform.OS === 'web') window.alert(`${title}: ${message}`);
@@ -25,34 +33,31 @@ export default function LoginScreen() {
   };
 
   useEffect(() => {
-    // ---> THE WEB RESCUE SQUAD <---
-    // This intercepts the tokens on the web BEFORE Expo Router deletes them!
+    // 1. Check exactly what URL Google sent us back to
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      appendLog(`Current URL: ${window.location.href}`);
+      
       const url = window.location.href;
-      if (url.includes('access_token') && url.includes('refresh_token')) {
-        const getParam = (stringUrl: string, key: string) => {
-          const match = stringUrl.match(new RegExp('[#?&]' + key + '=([^&]+)'));
-          return match ? match[1] : null;
-        };
-        
-        const access_token = getParam(url, 'access_token');
-        const refresh_token = getParam(url, 'refresh_token');
-        
-        if (access_token && refresh_token) {
-          console.log("Tokens successfully rescued from Web URL!");
-          // Force Supabase to log in immediately
-          supabase.auth.setSession({ access_token, refresh_token }).then(() => {
-            // Clean up the browser URL so it looks professional
-            window.history.replaceState({}, document.title, window.location.pathname);
-            router.replace('/(tabs)');
-          });
-        }
-      }
+      if (url.includes('access_token')) appendLog('URL contains access_token!');
+      else if (url.includes('code=')) appendLog('URL contains auth code!');
+      else if (url.includes('error_description=')) appendLog('URL contains an error from Google!');
+      else appendLog('URL is completely empty of auth tokens.');
     }
 
+    // 2. Check what Supabase is doing
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      appendLog(`Supabase Event Fired: ${event}`);
+      if (session) {
+         appendLog(`Session found for: ${session.user.email}`);
+      } else {
+         appendLog(`No active session found.`);
+      }
+
       if (event === 'PASSWORD_RECOVERY') setMode('update');
-      if (event === 'SIGNED_IN') router.replace('/(tabs)'); 
+      if (event === 'SIGNED_IN') {
+        appendLog('Routing to Tabs...');
+        router.replace('/(tabs)'); 
+      }
     });
     
     return () => { authListener.subscription.unsubscribe(); };
@@ -60,44 +65,15 @@ export default function LoginScreen() {
 
   const handleEmailAuth = async () => {
     if (!email || !password) return showAlert("Error", "Please fill in all required fields");
-    if (mode === 'signup' && !username) return showAlert("Error", "Please provide a username");
-    
     setLoading(true);
     
     if (mode === 'signup') {
-      const { error } = await supabase.auth.signUp({ 
-        email, password, options: { data: { username: username } }
-      });
+      const { error } = await supabase.auth.signUp({ email, password, options: { data: { username: username } } });
       if (error) showAlert("Error", error.message);
-      else showAlert("Success", "Account created! Check your email for the confirmation link.");
+      else showAlert("Success", "Account created!");
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) showAlert("Error", error.message);
-    }
-    
-    setLoading(false);
-  };
-
-  const handleForgotPassword = async () => {
-    if (!email) return showAlert("Error", "Please enter your email address");
-    setLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
-    if (error) showAlert("Error", error.message);
-    else {
-      showAlert("Check your email", "We sent you a password reset link!");
-      setMode('login');
-    }
-    setLoading(false);
-  };
-
-  const handleUpdatePassword = async () => {
-    if (!password) return showAlert("Error", "Please enter a new password");
-    setLoading(true);
-    const { error } = await supabase.auth.updateUser({ password: password });
-    if (error) showAlert("Error", error.message);
-    else {
-      showAlert("Success", "Your password has been updated! You can now log in normally.");
-      setMode('login'); setPassword(''); setEmail('');
     }
     setLoading(false);
   };
@@ -105,22 +81,22 @@ export default function LoginScreen() {
   const handleGoogleLogin = async () => {
     try {
       setLoading(true);
+      appendLog('Google Button Clicked');
       
-      // ---> EXPLICIT CLOUDFLARE WEB REDIRECT <---
       if (Platform.OS === 'web') {
+        appendLog('Triggering Web OAuth...');
+        const redirectTarget = window.location.origin + '/';
+        appendLog(`Telling Google to return to: ${redirectTarget}`);
+        
         const { error } = await supabase.auth.signInWithOAuth({ 
           provider: 'google',
-          options: {
-            redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
-          }
+          options: { redirectTo: redirectTarget }
         });
         if (error) throw error;
         return;
       }
 
-      // ---> NATIVE ANDROID/IOS REDIRECT <---
       const redirectTo = makeRedirectUri({ scheme: 'v1app' }); 
-      
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: { redirectTo, skipBrowserRedirect: true },
@@ -130,7 +106,6 @@ export default function LoginScreen() {
 
       if (data?.url) {
         const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-        
         if (res.type === 'success') {
           const parsedUrl = Linking.parse(res.url);
           const params = parsedUrl.queryParams || {};
@@ -138,109 +113,69 @@ export default function LoginScreen() {
           
           if (params.code) {
              await supabase.auth.exchangeCodeForSession(String(params.code));
-             router.replace('/(tabs)');
           } else {
              const access_match = fragment.match(/access_token=([^&]+)/);
              const refresh_match = fragment.match(/refresh_token=([^&]+)/);
-             
              if (access_match && refresh_match) {
-                 const { error: sessionError } = await supabase.auth.setSession({ access_token: access_match[1], refresh_token: refresh_match[1] });
-                 if (sessionError) throw sessionError;
-             } else {
-                 showAlert("Login Error", "Authentication tokens were not returned from Google.");
+                 await supabase.auth.setSession({ access_token: access_match[1], refresh_token: refresh_match[1] });
              }
           }
         }
       }
     } catch (error: any) {
-      showAlert("Error", error.message || "Something went wrong during Google Login");
+      appendLog(`ERROR: ${error.message}`);
+      showAlert("Error", error.message);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView contentContainerStyle={styles.scrollContainer}>
       <View style={styles.centerBox}>
         <Text style={styles.logo}>V</Text>
-        
-        <Text style={styles.title}>
-          {mode === 'login' ? 'Welcome Back' : mode === 'signup' ? 'Create Account' : mode === 'forgot' ? 'Reset Password' : 'Create New Password'}
-        </Text>
+        <Text style={styles.title}>{mode === 'login' ? 'Welcome Back' : 'Auth'}</Text>
 
         <View style={styles.inputContainer}>
-          
-          {mode === 'signup' && (
-            <TextInput placeholder="Choose a Username" placeholderTextColor="#666" style={styles.input} value={username} onChangeText={setUsername} autoCapitalize="none" />
-          )}
-
           {mode !== 'update' && (
-            <TextInput placeholder="Email" placeholderTextColor="#666" style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+            <TextInput placeholder="Email" placeholderTextColor="#666" style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" />
           )}
           
           {mode !== 'forgot' && (
             <View style={styles.passwordContainer}>
-              <TextInput 
-                placeholder={mode === 'update' ? "Enter your NEW Password" : "Password"} 
-                placeholderTextColor="#666" 
-                style={styles.passwordInput} 
-                secureTextEntry={!showPassword} 
-                value={password} 
-                onChangeText={setPassword} 
-              />
+              <TextInput placeholder="Password" placeholderTextColor="#666" style={styles.passwordInput} secureTextEntry={!showPassword} value={password} onChangeText={setPassword} />
               <TouchableOpacity style={styles.eyeIcon} onPress={() => setShowPassword(!showPassword)}>
                 <Ionicons name={showPassword ? "eye-off" : "eye"} size={22} color="#888" />
               </TouchableOpacity>
             </View>
           )}
           
-          {mode === 'forgot' ? (
-            <TouchableOpacity style={styles.primaryButton} onPress={handleForgotPassword} disabled={loading}>
-              {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Send Reset Link</Text>}
-            </TouchableOpacity>
-          ) : mode === 'update' ? (
-            <TouchableOpacity style={styles.primaryButton} onPress={handleUpdatePassword} disabled={loading}>
-              {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Save New Password</Text>}
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity style={styles.primaryButton} onPress={handleEmailAuth} disabled={loading}>
-              {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{mode === 'login' ? 'Login' : 'Sign Up'}</Text>}
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity style={styles.primaryButton} onPress={handleEmailAuth} disabled={loading}>
+            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{mode === 'login' ? 'Login' : 'Submit'}</Text>}
+          </TouchableOpacity>
         </View>
 
-        {mode === 'login' && (
-          <TouchableOpacity style={styles.forgotButton} onPress={() => setMode('forgot')}>
-            <Text style={styles.forgotText}>Forgot Password?</Text>
-          </TouchableOpacity>
-        )}
-
         {(mode === 'login' || mode === 'signup') && (
-          <>
-            <View style={styles.dividerRow}>
-              <View style={styles.line} /><Text style={styles.dividerText}>OR</Text><View style={styles.line} />
-            </View>
-
-            <TouchableOpacity style={styles.googleButton} onPress={handleGoogleLogin} disabled={loading}>
-               {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.googleButtonText}>Continue with Google</Text>}
-            </TouchableOpacity>
-          </>
-        )}
-
-        {mode !== 'update' && (
-          <TouchableOpacity style={styles.switchButton} onPress={() => { if (mode === 'login') setMode('signup'); else setMode('login'); }}>
-            <Text style={styles.switchText}>
-              {mode === 'login' ? "Don't have an account? Sign Up" : "Back to Login"}
-            </Text>
+          <TouchableOpacity style={styles.googleButton} onPress={handleGoogleLogin} disabled={loading}>
+             {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.googleButtonText}>Continue with Google</Text>}
           </TouchableOpacity>
         )}
+
+        {/* ---> THE X-RAY DEBUG BOX <--- */}
+        {Platform.OS === 'web' && (
+          <View style={styles.debugBox}>
+            <Text style={styles.debugTitle}>System Logs (Send screenshot of this!)</Text>
+            <Text style={styles.debugText}>{debugLog}</Text>
+          </View>
+        )}
+
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000', justifyContent: 'center', padding: 30 },
+  scrollContainer: { flexGrow: 1, backgroundColor: '#000', justifyContent: 'center', padding: 30 },
   centerBox: { width: '100%', maxWidth: 400, alignSelf: 'center' },
   logo: { color: '#e50914', fontSize: 60, fontWeight: '900', textAlign: 'center', marginBottom: 10 },
   title: { color: '#fff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 40 },
@@ -251,13 +186,9 @@ const styles = StyleSheet.create({
   eyeIcon: { paddingHorizontal: 15 },
   primaryButton: { backgroundColor: '#e50914', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 10 },
   buttonText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  forgotButton: { alignSelf: 'flex-end', marginTop: 10 },
-  forgotText: { color: '#888', fontSize: 13 },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 30, gap: 10 },
-  line: { flex: 1, height: 1, backgroundColor: '#333' },
-  dividerText: { color: '#666', fontSize: 12 },
-  googleButton: { backgroundColor: '#fff', padding: 15, borderRadius: 8, alignItems: 'center' },
+  googleButton: { backgroundColor: '#fff', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 30 },
   googleButtonText: { color: '#000', fontWeight: 'bold' },
-  switchButton: { marginTop: 30 },
-  switchText: { color: '#888', textAlign: 'center' }
+  debugBox: { marginTop: 40, padding: 15, backgroundColor: '#111', borderRadius: 8, borderWidth: 1, borderColor: '#e50914' },
+  debugTitle: { color: '#e50914', fontWeight: 'bold', marginBottom: 10, fontSize: 12 },
+  debugText: { color: '#00ff00', fontFamily: 'monospace', fontSize: 10, lineHeight: 16 }
 });
