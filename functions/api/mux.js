@@ -41,7 +41,8 @@ export async function onRequest(context) {
       new_asset_settings: { 
         playback_policy: ['public'], 
         video_quality: 'basic', 
-        passthrough: body.passthrough || 'unknown'
+        passthrough: body.passthrough || 'unknown',
+        mp4_support: 'standard' // <--- NEW: THIS IS THE MAGIC DOWNLOAD LINE
       }, 
       cors_origin: '*' 
     };

@@ -1,5 +1,7 @@
+import { Ionicons } from '@expo/vector-icons';
 import { makeRedirectUri } from 'expo-auth-session';
-import { useRouter } from 'expo-router'; // ---> NEW: Added Router <---
+import * as Linking from 'expo-linking';
+import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -8,17 +10,20 @@ import { supabase } from '../lib/supabase';
 WebBrowser.maybeCompleteAuthSession();
 
 export default function LoginScreen() {
-  const router = useRouter(); // ---> NEW: Initialize Router <---
+  const router = useRouter();
   
   const [mode, setMode] = useState<'login' | 'signup' | 'forgot' | 'update'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState(''); 
   const [loading, setLoading] = useState(false);
+  
+  // ---> NEW: Show Password State <---
+  const [showPassword, setShowPassword] = useState(false); 
 
   const showAlert = (title: string, message: string) => {
     if (Platform.OS === 'web') window.alert(`${title}: ${message}`);
-    else Alert.alert(title, message);
+    else Alert.alert(title, String(message));
   };
 
   useEffect(() => {
@@ -26,7 +31,6 @@ export default function LoginScreen() {
       if (event === 'PASSWORD_RECOVERY') {
         setMode('update');
       }
-      // Optional: Auto-redirect if they are already logged in when the app opens
       if (event === 'SIGNED_IN') {
          router.replace('/(tabs)'); 
       }
@@ -46,19 +50,12 @@ export default function LoginScreen() {
         password,
         options: { data: { username: username } }
       });
-      if (error) {
-        showAlert("Error", error.message);
-      } else {
-        showAlert("Success", "Account created! Check your email for the confirmation link.");
-      }
+      if (error) showAlert("Error", error.message);
+      else showAlert("Success", "Account created! Check your email for the confirmation link.");
     } else {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) {
-        showAlert("Error", error.message);
-      } else {
-        // ---> NEW: Navigate to the Home Screen on success! <---
-        router.replace('/(tabs)');
-      }
+      if (error) showAlert("Error", error.message);
+      else router.replace('/(tabs)');
     }
     
     setLoading(false);
@@ -90,6 +87,7 @@ export default function LoginScreen() {
     setLoading(false);
   };
 
+  // ---> UPDATED: Bulletproof Native Google OAuth Parsing <---
   const handleGoogleLogin = async () => {
     try {
       setLoading(true);
@@ -100,7 +98,6 @@ export default function LoginScreen() {
         return;
       }
 
-      // ---> NEW: Explicitly force the 'v1app' scheme so the browser knows where to go <---
       const redirectTo = makeRedirectUri({ scheme: 'v1app' }); 
       
       const { data, error } = await supabase.auth.signInWithOAuth({
@@ -117,14 +114,30 @@ export default function LoginScreen() {
         const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
         
         if (res.type === 'success') {
-          const { url } = res;
-          await supabase.auth.getSessionFromUrl(url);
-          // ---> NEW: Navigate to the Home Screen on success! <---
-          router.replace('/(tabs)');
+          // Use Expo Linking to safely parse the URL instead of Regex
+          const parsedUrl = Linking.parse(res.url);
+          const params = parsedUrl.queryParams || {};
+          const fragment = parsedUrl.fragment || '';
+          
+          if (params.code) {
+             await supabase.auth.exchangeCodeForSession(String(params.code));
+             router.replace('/(tabs)');
+          } else {
+             // Fallback for implicit flow
+             const access_match = fragment.match(/access_token=([^&]+)/);
+             const refresh_match = fragment.match(/refresh_token=([^&]+)/);
+             
+             if (access_match && refresh_match) {
+                 await supabase.auth.setSession({ access_token: access_match[1], refresh_token: refresh_match[1] });
+                 router.replace('/(tabs)');
+             } else {
+                 throw new Error("Could not parse authentication tokens from Google.");
+             }
+          }
         }
       }
     } catch (error: any) {
-      showAlert("Error", error.message);
+      showAlert("Error", error.message || "Something went wrong during Google Login");
     } finally {
       setLoading(false);
     }
@@ -149,8 +162,21 @@ export default function LoginScreen() {
             <TextInput placeholder="Email" placeholderTextColor="#666" style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
           )}
           
+          {/* ---> NEW: Show Password Toggle UI <--- */}
           {mode !== 'forgot' && (
-            <TextInput placeholder={mode === 'update' ? "Enter your NEW Password" : "Password"} placeholderTextColor="#666" style={styles.input} secureTextEntry value={password} onChangeText={setPassword} />
+            <View style={styles.passwordContainer}>
+              <TextInput 
+                placeholder={mode === 'update' ? "Enter your NEW Password" : "Password"} 
+                placeholderTextColor="#666" 
+                style={styles.passwordInput} 
+                secureTextEntry={!showPassword} 
+                value={password} 
+                onChangeText={setPassword} 
+              />
+              <TouchableOpacity style={styles.eyeIcon} onPress={() => setShowPassword(!showPassword)}>
+                <Ionicons name={showPassword ? "eye-off" : "eye"} size={22} color="#888" />
+              </TouchableOpacity>
+            </View>
           )}
           
           {mode === 'forgot' ? (
@@ -205,6 +231,12 @@ const styles = StyleSheet.create({
   title: { color: '#fff', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 40 },
   inputContainer: { gap: 15 },
   input: { backgroundColor: '#1a1a1a', color: '#fff', padding: 15, borderRadius: 8, borderWidth: 1, borderColor: '#333' },
+  
+  // ---> NEW STYLES FOR PASSWORD TOGGLE <---
+  passwordContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', borderRadius: 8, borderWidth: 1, borderColor: '#333' },
+  passwordInput: { flex: 1, color: '#fff', padding: 15 },
+  eyeIcon: { paddingHorizontal: 15 },
+  
   primaryButton: { backgroundColor: '#e50914', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 10 },
   buttonText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
   forgotButton: { alignSelf: 'flex-end', marginTop: 10 },
