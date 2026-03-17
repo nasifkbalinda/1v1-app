@@ -19,7 +19,6 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false); 
   
-  // ---> NEW: ON-SCREEN DEBUGGER <---
   const [debugLog, setDebugLog] = useState<string>('Awaiting Web Auth...');
 
   const appendLog = (msg: string) => {
@@ -33,29 +32,41 @@ export default function LoginScreen() {
   };
 
   useEffect(() => {
-    // 1. Check exactly what URL Google sent us back to
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       appendLog(`Current URL: ${window.location.href}`);
       
       const url = window.location.href;
-      if (url.includes('access_token')) appendLog('URL contains access_token!');
-      else if (url.includes('code=')) appendLog('URL contains auth code!');
-      else if (url.includes('error_description=')) appendLog('URL contains an error from Google!');
-      else appendLog('URL is completely empty of auth tokens.');
+      if (url.includes('access_token') && url.includes('refresh_token')) {
+        appendLog('Tokens found in URL! Processing...');
+        
+        const getParam = (stringUrl: string, key: string) => {
+          const match = stringUrl.match(new RegExp('[#?&]' + key + '=([^&]+)'));
+          return match ? match[1] : null;
+        };
+        
+        const access_token = getParam(url, 'access_token');
+        const refresh_token = getParam(url, 'refresh_token');
+        
+        if (access_token && refresh_token) {
+          // Force Supabase to log in immediately
+          supabase.auth.setSession({ access_token, refresh_token }).then(({ error }) => {
+            if (error) {
+              appendLog(`Session Error: ${error.message}`);
+            } else {
+              appendLog('Session set successfully. Routing to tabs...');
+              window.history.replaceState({}, document.title, window.location.pathname);
+              router.replace('/(tabs)');
+            }
+          });
+        }
+      }
     }
 
-    // 2. Check what Supabase is doing
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       appendLog(`Supabase Event Fired: ${event}`);
-      if (session) {
-         appendLog(`Session found for: ${session.user.email}`);
-      } else {
-         appendLog(`No active session found.`);
-      }
-
       if (event === 'PASSWORD_RECOVERY') setMode('update');
       if (event === 'SIGNED_IN') {
-        appendLog('Routing to Tabs...');
+        appendLog('SIGNED_IN event detected. Routing to Tabs...');
         router.replace('/(tabs)'); 
       }
     });
@@ -83,9 +94,9 @@ export default function LoginScreen() {
       setLoading(true);
       appendLog('Google Button Clicked');
       
+      // ---> THE FIX: SEND GOOGLE TO THE LOGIN PAGE <---
       if (Platform.OS === 'web') {
-        appendLog('Triggering Web OAuth...');
-        const redirectTarget = window.location.origin + '/';
+        const redirectTarget = window.location.origin + '/login'; // explicitly target the login route
         appendLog(`Telling Google to return to: ${redirectTarget}`);
         
         const { error } = await supabase.auth.signInWithOAuth({ 
@@ -96,6 +107,7 @@ export default function LoginScreen() {
         return;
       }
 
+      // Native App logic remains exactly the same
       const redirectTo = makeRedirectUri({ scheme: 'v1app' }); 
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -161,10 +173,9 @@ export default function LoginScreen() {
           </TouchableOpacity>
         )}
 
-        {/* ---> THE X-RAY DEBUG BOX <--- */}
         {Platform.OS === 'web' && (
           <View style={styles.debugBox}>
-            <Text style={styles.debugTitle}>System Logs (Send screenshot of this!)</Text>
+            <Text style={styles.debugTitle}>System Logs</Text>
             <Text style={styles.debugText}>{debugLog}</Text>
           </View>
         )}
