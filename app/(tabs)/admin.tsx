@@ -46,7 +46,7 @@ export default function AdminScreen() {
   const [tvSeriesUploading, setTvSeriesUploading] = useState(false);
 
   const [manageMovies, setManageMovies] = useState<any[]>([]);
-  const [trashedEpisodes, setTrashedEpisodes] = useState<any[]>([]); // NEW: Track trashed episodes
+  const [trashedEpisodes, setTrashedEpisodes] = useState<any[]>([]); 
   const [manageLoading, setManageLoading] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -405,11 +405,9 @@ export default function AdminScreen() {
 
   const fetchAllMovies = useCallback(async () => {
     setManageLoading(true);
-    // Fetch Movies
     const { data: moviesData } = await supabase.from('movies').select('*').order('title');
     setManageMovies(moviesData ?? []);
     
-    // Fetch Trashed Episodes to display in the Trash Tab
     const { data: episodesData } = await supabase.from('episodes').select('*, movies(title)').eq('status', 'trash').order('season_number');
     setTrashedEpisodes(episodesData ?? []);
     
@@ -483,19 +481,17 @@ export default function AdminScreen() {
 
     if (movie.type === 'TV Series') {
       setLoadingEpisodes(true);
-      // ONLY pull non-trashed episodes into the editor
       const { data } = await supabase.from('episodes').select('*').eq('movie_id', movie.id).neq('status', 'trash').order('season_number').order('episode_number');
       setEditEpisodes(data || []);
       setLoadingEpisodes(false);
     }
   };
 
-  // ---> MODIFIED: Soft Delete Episode <---
   const handleDeleteEpisode = async (epId: string) => {
     if (Platform.OS === 'web' ? window.confirm("Move episode to trash?") : true) {
       await supabase.from('episodes').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', epId);
       setEditEpisodes(prev => prev.filter(e => e.id !== epId));
-      fetchAllMovies(); // Refresh the trash arrays in the background
+      fetchAllMovies();
     }
   };
 
@@ -514,9 +510,14 @@ export default function AdminScreen() {
     fetchAllMovies();
   };
 
+  // ---> UPDATED: Error Logging for Bulk Delete <---
   const handleBulkDeleteForever = async () => {
     if (Platform.OS === 'web' ? window.confirm("Delete forever?") : true) {
-      await supabase.from('movies').delete().in('id', selectedTrashIds);
+      const { error } = await supabase.from('movies').delete().in('id', selectedTrashIds);
+      if (error) {
+        if (Platform.OS === 'web') window.alert("Delete Failed: " + error.message);
+        else Alert.alert("Delete Failed", error.message);
+      }
       setSelectedTrashIds([]);
       fetchAllMovies();
     }
@@ -524,23 +525,37 @@ export default function AdminScreen() {
 
   const handleTrashMovie = async (id: string) => { setUpdatingId(id); await supabase.from('movies').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', id); fetchAllMovies(); setUpdatingId(null); };
   const handleRestoreMovie = async (id: string) => { setUpdatingId(id); await supabase.from('movies').update({ status: 'active', deleted_at: null }).eq('id', id); fetchAllMovies(); setUpdatingId(null); };
+  
+  // ---> UPDATED: Error Logging for Single Movie Delete <---
   const handleDeleteForeverMovie = async (id: string) => {
     if (Platform.OS === 'web' ? window.confirm("Delete forever?") : true) {
-      setDeletingId(id); await supabase.from('movies').delete().eq('id', id); fetchAllMovies(); setDeletingId(null);
+      setDeletingId(id); 
+      const { error } = await supabase.from('movies').delete().eq('id', id); 
+      if (error) {
+        if (Platform.OS === 'web') window.alert("Delete Failed: " + error.message);
+        else Alert.alert("Delete Failed", error.message);
+      }
+      fetchAllMovies(); 
+      setDeletingId(null);
     }
   };
 
-  // ---> NEW: Individual Episode Restore & Hard Delete <---
   const handleRestoreEpisode = async (id: string) => {
     setUpdatingId(id); 
     await supabase.from('episodes').update({ status: 'active', deleted_at: null }).eq('id', id); 
     fetchAllMovies(); 
     setUpdatingId(null); 
   };
+
+  // ---> UPDATED: Error Logging for Single Episode Delete <---
   const handleDeleteForeverEpisode = async (id: string) => {
     if (Platform.OS === 'web' ? window.confirm("Delete episode forever?") : true) {
       setDeletingId(id); 
-      await supabase.from('episodes').delete().eq('id', id); 
+      const { error } = await supabase.from('episodes').delete().eq('id', id); 
+      if (error) {
+        if (Platform.OS === 'web') window.alert("Delete Failed: " + error.message);
+        else Alert.alert("Delete Failed", error.message);
+      }
       fetchAllMovies(); 
       setDeletingId(null);
     }
@@ -875,11 +890,10 @@ export default function AdminScreen() {
                   </View>
                 ))}
 
-                {/* NEW: Trashed Episodes List */}
+                {/* Trashed Episodes List */}
                 {trashedEpisodes.map(ep => (
                   <View key={`ep-${ep.id}`} style={[styles.manageItem, { borderColor: '#444' }]}>
                     <View style={{ padding: 5, marginRight: 8 }}>
-                       {/* Hiding the checkbox for episodes to keep bulk actions simple for movies only */}
                        <Ionicons name="tv-outline" size={22} color="#888" />
                     </View>
                     <View style={styles.manageInfo}>
