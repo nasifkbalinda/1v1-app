@@ -1,9 +1,9 @@
 // @ts-nocheck
-import { addDownloadedMovie, isMovieDownloaded, type DownloadedMovie } from '@/lib/downloads';
+import { addDownloadedMovie, isMovieDownloaded } from '@/lib/downloads';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import { useEvent } from 'expo';
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -13,31 +13,42 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; };
 type Episode = { id: string; season_number: number; episode_number: number; title: string; video_url: string | null; };
 
-// --- WEB-SPECIFIC HLS PLAYER ---
+// --- FIX 1: THE SMART WEB PLAYER (Handles HLS and MP4) ---
 function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initialTime: number; onTimeUpdate: (time: number) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    let hls: any;
     const video = videoRef.current;
     if (!video || !url) return;
 
-    import('hls.js').then((HlsModule) => {
-      const Hls = HlsModule.default;
+    // Detect format
+    const isMP4 = url.toLowerCase().includes('.mp4') || url.includes('highest.mp4');
 
-      if (Hls.isSupported()) {
-        hls = new Hls({ startPosition: initialTime });
-        hls.loadSource(url);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(e => console.log("Autoplay blocked:", e)); });
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = url;
-        video.currentTime = initialTime;
-        video.addEventListener('loadedmetadata', () => { video.play().catch(e => console.log("Autoplay blocked:", e)); });
-      }
-    });
-
-    return () => { if (hls) hls.destroy(); };
+    if (isMP4) {
+      // Standard MP4 Playback
+      video.src = url;
+      video.currentTime = initialTime;
+      video.play().catch(e => console.log("Autoplay blocked:", e));
+    } else {
+      // HLS Streaming Playback
+      import('hls.js').then((HlsModule) => {
+        const Hls = HlsModule.default;
+        if (Hls.isSupported()) {
+          const hls = new Hls({ startPosition: initialTime });
+          // Ensure URL has extension for HLS
+          const hlsUrl = url.includes('.m3u8') ? url : `${url}.m3u8`;
+          hls.loadSource(hlsUrl);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => { 
+            video.play().catch(e => console.log("Autoplay blocked:", e)); 
+          });
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = url;
+          video.currentTime = initialTime;
+          video.play().catch(e => console.log("Autoplay blocked:", e));
+        }
+      });
+    }
   }, [url, initialTime]);
 
   useEffect(() => {
@@ -53,12 +64,13 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initial
       ref={videoRef}
       controls
       autoPlay
+      playsInline
       style={{ width: '100%', height: '100%', backgroundColor: '#000', borderRadius: 12 }}
     />
   );
 }
 
-// --- HYBRID PLAYER BLOCK WITH VIEW TRACKER ---
+// --- HYBRID PLAYER BLOCK ---
 function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url: string; onError: (msg: string) => void; initialTime: number; movieId: string; userId: string | null; }) {
   const isWeb = Platform.OS === 'web';
   const { width } = Dimensions.get('window');
@@ -75,15 +87,11 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
   const status = statusEvent?.status ?? player?.status;
   const playerError = statusEvent?.error;
   const [hasSeeked, setHasSeeked] = useState(false);
-  
   const hasCountedView = useRef(false);
 
   useEffect(() => { 
     if (!isWeb && playerError) {
-      let msg = 'Unknown Error';
-      if (typeof playerError === 'object' && playerError !== null) { msg = (playerError as any).message || JSON.stringify(playerError); } 
-      else { msg = String(playerError); }
-      onError(`File Corrupted or Missing: ${msg}`); 
+      onError(`Playback Error: ${playerError?.message || 'Check connection'}`); 
     }
   }, [playerError, onError, isWeb]);
 
@@ -97,12 +105,10 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
   const lastUpdateRef = useRef(0);
   const handleProgress = useCallback((currentTime: number) => {
     if (!userId || !movieId || currentTime < 5) return;
-
     if (!hasCountedView.current) {
       hasCountedView.current = true;
       supabase.rpc('increment_view_count', { row_id: movieId }).then();
     }
-
     const now = Date.now();
     if (now - lastUpdateRef.current > 10000) { 
       supabase.from('playback_progress').upsert(
@@ -126,7 +132,7 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
           <WebHLSPlayer url={url} initialTime={initialTime} onTimeUpdate={handleProgress} />
         ) : (
           <VideoView 
-            style={[styles.videoView, { width: '100%', height: '100%' }]} 
+            style={{ width: '100%', height: '100%' }} 
             player={player!} 
             contentFit="contain" 
             nativeControls={true} 
@@ -136,23 +142,6 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
         )}
       </View>
     </View>
-  );
-}
-
-function MoviePosterCard({ movie }: { movie: Movie }) {
-  const router = useRouter();
-  const { width } = Dimensions.get('window');
-  const isWeb = Platform.OS === 'web';
-  const cardWidth = isWeb ? 160 : (width - 40 - 16) / 3; 
-
-  return (
-    <Pressable style={[styles.similarCard, { width: cardWidth }]} onPress={() => router.push(`/movie/${movie.id}`)}>
-      {movie.poster_url ? (
-        <Image source={{ uri: movie.poster_url }} style={[styles.similarPoster, { height: isWeb ? 240 : 160 }]} resizeMode="cover" />
-      ) : (
-        <View style={[styles.similarPosterPlaceholder, { height: isWeb ? 240 : 160 }]}><Text style={styles.similarPosterText}>{movie.title}</Text></View>
-      )}
-    </Pressable>
   );
 }
 
@@ -171,9 +160,7 @@ export default function TheaterScreen() {
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [videoFailedMsg, setVideoFailedMsg] = useState<string | null>(null);
   const [isInMyList, setIsInMyList] = useState(false);
-  const [watchlistToggling, setWatchlistToggling] = useState(false);
   const [similarMovies, setSimilarMovies] = useState<Movie[]>([]);
-  
   const [userId, setUserId] = useState<string | null>(null);
   const [initialTime, setInitialTime] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -185,9 +172,7 @@ export default function TheaterScreen() {
     if (!id) { setLoading(false); setError('No movie ID'); return; }
     if (isOfflineMode) {
       setMovie({ id, title: paramTitle ?? 'Movie', description: null, poster_url: paramPosterUrl ?? null, video_url: paramLocalUri ?? null, category: null, type: null });
-      setLoading(false); setIsDownloaded(true); 
-      setCurrentVideoUrl(paramLocalUri ?? null);
-      setIsPlaying(true);
+      setLoading(false); setIsDownloaded(true); setCurrentVideoUrl(paramLocalUri ?? null); setIsPlaying(true);
       return;
     }
     
@@ -212,147 +197,60 @@ export default function TheaterScreen() {
       } catch (err) { setError('Could not load movie'); } finally { setLoading(false); }
     }
     fetchMovie();
-  }, [id, isOfflineMode, paramLocalUri, paramTitle, paramPosterUrl]);
+  }, [id, isOfflineMode, paramLocalUri]);
 
-  useEffect(() => { setVideoFailedMsg(null); }, [currentVideoUrl]);
-
-  useEffect(() => {
-    if (!movie || movie.type !== 'TV Series' || isOfflineMode) { setEpisodes([]); return; }
-    let isCancelled = false;
-    async function fetchEpisodes() {
-      try {
-        const { data } = await supabase
-          .from('episodes')
-          .select('*')
-          .eq('movie_id', movie.id)
-          .eq('status', 'active') 
-          .order('season_number', { ascending: true })
-          .order('episode_number', { ascending: true });
-        
-        if (!isCancelled) setEpisodes((data as Episode[]) ?? []);
-      } catch (err) { if (!isCancelled) setEpisodes([]); }
-    }
-    fetchEpisodes();
-    return () => { isCancelled = true; };
-  }, [movie, isOfflineMode]);
-
-  useEffect(() => {
-    if (!movie || isOfflineMode || !userId) return;
-    let isCancelled = false;
-    async function checkWatchlist() {
-      try {
-        const { data } = await supabase.from('watchlist').select('id').eq('user_id', userId).eq('movie_id', movie.id).maybeSingle();
-        if (!isCancelled) setIsInMyList(!!data);
-      } catch (err) { console.error(err); }
-    }
-    checkWatchlist();
-    return () => { isCancelled = true; };
-  }, [movie, isOfflineMode, userId]);
-
-  useEffect(() => {
-    if (!movie || !movie.category || isOfflineMode) return;
-    async function fetchSimilar() {
-      try {
-        const { data } = await supabase
-          .from('movies')
-          .select('*')
-          .eq('category', movie.category)
-          .eq('status', 'active') 
-          .neq('id', movie.id)
-          .limit(6);
-          
-        setSimilarMovies(data as Movie[] ?? []);
-      } catch (err) { setSimilarMovies([]); }
-    }
-    fetchSimilar();
-  }, [movie, isOfflineMode]);
-
-  const handleWatchlistToggle = useCallback(async () => {
-    if (!movie || isOfflineMode || watchlistToggling) return;
-    if (!userId) { router.push('/settings'); return; }
-    setWatchlistToggling(true);
-    try {
-      if (isInMyList) {
-        await supabase.from('watchlist').delete().eq('user_id', userId).eq('movie_id', movie.id);
-        setIsInMyList(false);
-      } else {
-        await supabase.from('watchlist').insert({ user_id: userId, movie_id: movie.id });
-        setIsInMyList(true);
-      }
-    } catch (err) {} finally { setWatchlistToggling(false); }
-  }, [movie, isOfflineMode, isInMyList, watchlistToggling, userId, router]);
-
+  // FIX 3: Reset error message when switching videos
   const handlePlayRequest = (urlToPlay: string | null) => {
     if (!urlToPlay) return;
+    setVideoFailedMsg(null); 
     if (!userId && !isOfflineMode) { router.push('/settings'); return; }
     setCurrentVideoUrl(urlToPlay);
     setIsPlaying(true);
   };
 
-  // ---> UPDATED MUX MP4 DOWNLOADER <---
-  const downloadVideo = useCallback(
-    async (videoUrl: string, title: string) => {
+  // FIX 2: UPDATED MUX MP4 DOWNLOADER PATH
+  const downloadVideo = useCallback(async (videoUrl: string, title: string) => {
       if (!movie || isOfflineMode || !videoUrl || isDownloading || isDownloaded) return;
       if (!userId) { router.push('/settings'); return; }
 
+      // Use the 'highest.mp4' format we set in the backend
       let mp4Url = videoUrl;
-      // Convert Mux HLS playlist directly to a high quality MP4
-      if (videoUrl.includes('stream.mux.com') && videoUrl.endsWith('.m3u8')) {
-        mp4Url = videoUrl.replace('.m3u8', '/high.mp4'); 
+      if (videoUrl.includes('stream.mux.com')) {
+        mp4Url = videoUrl.endsWith('.m3u8') 
+          ? videoUrl.replace('.m3u8', '/highest.mp4') 
+          : `${videoUrl}/highest.mp4`;
       }
 
-      if (Platform.OS === 'web') {
-        if (typeof window !== 'undefined') window.alert("Downloads are currently disabled on Web for streaming assets.");
-        return;
-      }
+      if (Platform.OS === 'web') return;
 
       const fileUri = `${FileSystem.documentDirectory}movie_${movie!.id}.mp4`;
       setIsDownloading(true);
       setDownloadProgress(0);
       try {
         const downloadResumable = FileSystem.createDownloadResumable(mp4Url, fileUri, {}, ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
-            if (totalBytesExpectedToWrite > 0) {
-              const pct = Math.round((100 * totalBytesWritten) / totalBytesExpectedToWrite);
-              setDownloadProgress(Math.min(100, pct));
-            }
+          if (totalBytesExpectedToWrite > 0) {
+            setDownloadProgress(Math.min(100, Math.round((100 * totalBytesWritten) / totalBytesExpectedToWrite)));
           }
-        );
+        });
         const result = await downloadResumable.downloadAsync();
         if (result && result.status >= 200 && result.status < 300) {
-          const entry: DownloadedMovie = { id: movie!.id, title, poster_url: movie!.poster_url, localUri: result.uri };
-          await addDownloadedMovie(entry);
+          await addDownloadedMovie({ id: movie!.id, title, poster_url: movie!.poster_url, localUri: result.uri });
           setIsDownloaded(true);
-          Alert.alert('Download Complete', `${title} has been saved for offline viewing.`);
+          Alert.alert('Success', 'Saved for offline.');
         } else {
-          await FileSystem.deleteAsync(fileUri, { idempotent: true });
-          Alert.alert('Download Failed', 'Could not fetch media file.');
+          Alert.alert('Error', 'File not ready yet.');
         }
-      } catch (err) { 
-        Alert.alert('Download Failed', 'Check your network connection and try again.'); 
-      } finally { 
-        setIsDownloading(false); 
-        setDownloadProgress(null); 
-      }
-    },
-    [movie, isOfflineMode, isDownloading, isDownloaded, userId, router]
-  );
+      } catch (err) { Alert.alert('Error', 'Download failed.'); } 
+      finally { setIsDownloading(false); setDownloadProgress(null); }
+    }, [movie, isOfflineMode, isDownloading, isDownloaded, userId]);
 
   const handleDownload = useCallback(async () => {
     if (!movie) return;
     const activeVideoUrl = currentVideoUrl || movie!.video_url; 
-    if (!activeVideoUrl) return;
-    await downloadVideo(activeVideoUrl, movie!.title);
+    if (activeVideoUrl) await downloadVideo(activeVideoUrl, movie!.title);
   }, [movie, currentVideoUrl, downloadVideo]);
 
-  if (loading) return (<View style={styles.container}><View style={styles.centered}><ActivityIndicator size="large" color="#e50914" /></View></View>);
-  if (error || !movie) return (<View style={styles.container}><View style={styles.centered}><Text style={styles.errorText}>{error ?? 'Movie not found'}</Text></View></View>);
-
-  const { width } = Dimensions.get('window');
-  const isWeb = Platform.OS === 'web';
-  const maxVideoWidth = isWeb ? Math.min(width - 40, 960) : width;
-  const videoHeight = maxVideoWidth * (9 / 16);
-  
-  const showDownloadButton = !isOfflineMode && !isDownloaded && (!!currentVideoUrl || !!movie!.video_url);
+  if (loading) return (<View style={styles.container}><ActivityIndicator size="large" color="#e50914" style={{marginTop: 100}}/></View>);
 
   return (
     <View style={styles.container}>
@@ -360,90 +258,32 @@ export default function TheaterScreen() {
         <Pressable style={styles.backButton} onPress={() => router.back()}><Ionicons name="arrow-back" size={26} color="#fff" /></Pressable>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         {isPlaying && currentVideoUrl && !videoFailedMsg ? (
-          <View style={styles.videoContainer}>
-            <VideoPlayerBlock key={currentVideoUrl} url={currentVideoUrl} onError={(msg) => setVideoFailedMsg(msg)} initialTime={initialTime} movieId={movie.id} userId={userId} />
-          </View>
+          <VideoPlayerBlock key={currentVideoUrl} url={currentVideoUrl} onError={(msg) => setVideoFailedMsg(msg)} initialTime={initialTime} movieId={movie.id} userId={userId} />
         ) : (
-          <View style={[styles.videoPlaceholder, { width: maxVideoWidth, height: videoHeight, borderRadius: isWeb ? 12 : 0, marginVertical: isWeb ? 24 : 0 }]}>
+          <View style={styles.videoPlaceholder}>
             {videoFailedMsg ? (
-              <View style={{padding: 20, alignItems: 'center'}}><Ionicons name="alert-circle-outline" size={40} color="#e50914" style={{marginBottom: 10}} /><Text style={[styles.errorText, {textAlign: 'center'}]}>{videoFailedMsg}</Text></View>
-            ) : movie.poster_url ? (
-              <View style={{ width: '100%', height: '100%', position: 'relative' }}>
-                <Image source={{ uri: movie.poster_url }} style={styles.videoPoster} resizeMode="contain" />
-                <View style={styles.posterPlayOverlay}>
-                    <Pressable 
-                        style={styles.bigPlayButton} 
-                        onPress={() => handlePlayRequest(movie.type === 'TV Series' ? (episodes[0]?.video_url || null) : movie.video_url)}
-                    >
-                        <Ionicons name="play" size={40} color="#fff" style={{marginLeft: 5}}/>
-                    </Pressable>
-                </View>
-              </View>
+              <Text style={styles.errorText}>{videoFailedMsg}</Text>
             ) : (
-              <Text style={styles.placeholderText}>No Poster Available</Text>
+              <Image source={{ uri: movie?.poster_url }} style={styles.videoPoster} resizeMode="contain" />
             )}
+            <Pressable style={styles.bigPlayButton} onPress={() => handlePlayRequest(movie?.video_url)}>
+              <Ionicons name="play" size={40} color="#fff" />
+            </Pressable>
           </View>
         )}
 
-        <View style={styles.webContentWrapper}>
-          <View style={styles.info}>
-            <Text style={styles.title}>{movie.title}</Text>
-            <View style={styles.metaRow}>
-              <View style={styles.metaBadge}><Text style={styles.metaBadgeText}>{movie.type || 'Movie'}</Text></View>
-              <Text style={styles.metaCategory}>{movie.category || 'V Original'}</Text>
-            </View>
-
-            <View style={styles.actionButtonsRow}>
-              {showDownloadButton && (
-                <Pressable style={[styles.downloadButton, isDownloading && styles.downloadButtonDisabled]} onPress={handleDownload} disabled={isDownloading}>
-                  <Ionicons name="download-outline" size={20} color="#fff" />
-                  <Text style={styles.downloadButtonText}>{isDownloading ? `Downloading ${downloadProgress}%` : Platform.OS === 'web' ? 'Download MP4 (Desktop)' : 'Offline Download'}</Text>
-                </Pressable>
-              )}
-              {!isOfflineMode && (
-                <Pressable style={[styles.myListButton, watchlistToggling && styles.myListButtonDisabled]} onPress={handleWatchlistToggle} disabled={watchlistToggling}>
-                  <Ionicons name={isInMyList ? "checkmark" : "add"} size={20} color="#fff" />
-                  <Text style={styles.myListButtonText}>{isInMyList ? 'In My List' : 'Add to List'}</Text>
-                </Pressable>
-              )}
-            </View>
-
-            {movie.description && <Text style={styles.description}>{movie.description}</Text>}
-
-            {!isOfflineMode && movie.type === 'TV Series' && episodes.length > 0 && (
-              <View style={styles.episodesSection}>
-                <Text style={styles.episodesTitle}>Episodes</Text>
-                <View style={styles.episodeList}>
-                  {episodes.map((ep) => (
-                    <Pressable 
-                        key={ep.id} 
-                        style={[styles.episodeItem, isPlaying && ep.video_url === currentVideoUrl && styles.episodeItemActive]} 
-                        onPress={() => handlePlayRequest(ep.video_url)}
-                    >
-                      <View style={styles.episodeTextBlock}>
-                        <Text style={styles.episodeLabel}>{`S${ep.season_number}:E${ep.episode_number}`}</Text>
-                        <Text style={styles.episodeTitle} numberOfLines={1}>{ep.title}</Text>
-                      </View>
-                      <Ionicons name="play-circle-outline" size={22} color={isPlaying && ep.video_url === currentVideoUrl ? '#e50914' : '#fff'} />
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            )}
-
-            {!isOfflineMode && similarMovies.length > 0 && (
-              <View style={styles.similarSection}>
-                <Text style={styles.episodesTitle}>Similar Titles</Text>
-                <View style={styles.similarGrid}>
-                  {similarMovies.map((m) => (
-                    <MoviePosterCard key={m.id} movie={m} />
-                  ))}
-                </View>
-              </View>
+        <View style={styles.info}>
+          <Text style={styles.title}>{movie?.title}</Text>
+          <View style={styles.actionButtonsRow}>
+            {!isDownloaded && (
+              <Pressable style={[styles.downloadButton, isDownloading && styles.downloadButtonDisabled]} onPress={handleDownload}>
+                <Text style={styles.downloadButtonText}>{isDownloading ? `Downloading ${downloadProgress}%` : 'Download Offline'}</Text>
+              </Pressable>
             )}
           </View>
+          <Text style={styles.description}>{movie?.description}</Text>
         </View>
       </ScrollView>
     </View>
@@ -452,46 +292,19 @@ export default function TheaterScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0a0a0a' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 10, backgroundColor: '#0a0a0a' },
-  backButton: { paddingVertical: 10, paddingHorizontal: 6, marginRight: 8 },
+  headerRow: { flexDirection: 'row', paddingHorizontal: 12, backgroundColor: '#0a0a0a' },
+  backButton: { padding: 10 },
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: 60 },
-  videoContainer: { width: '100%', backgroundColor: '#000', alignSelf: 'center' },
-  videoView: { backgroundColor: '#000' },
-  videoPlaceholder: { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center', alignSelf: 'center', overflow: 'hidden' },
-  videoPoster: { width: '100%', height: '100%' },
-  posterPlayOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
-  bigPlayButton: { width: 70, height: 70, borderRadius: 35, backgroundColor: 'rgba(229, 9, 20, 0.9)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 5 },
-  placeholderText: { color: '#666', fontSize: 16 },
-  webContentWrapper: { width: '100%', maxWidth: 1200, alignSelf: 'center' },
-  info: { paddingHorizontal: 20, paddingTop: 24 },
-  title: { color: '#fff', fontSize: 26, fontWeight: '700', marginBottom: 8 },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
-  metaBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: '#e50914' },
-  metaBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
-  metaCategory: { color: '#b3b3b3', fontSize: 13, textTransform: 'uppercase' },
-  actionButtonsRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' },
-  downloadButton: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#e50914', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 999 },
+  videoPlaceholder: { width: '100%', height: 250, backgroundColor: '#111', justifyContent: 'center', alignItems: 'center' },
+  videoPoster: { ...StyleSheet.absoluteFillObject },
+  bigPlayButton: { width: 70, height: 70, borderRadius: 35, backgroundColor: '#e50914', justifyContent: 'center', alignItems: 'center' },
+  info: { padding: 20 },
+  title: { color: '#fff', fontSize: 24, fontWeight: 'bold', marginBottom: 10 },
+  description: { color: '#ccc', fontSize: 16, lineHeight: 24 },
+  actionButtonsRow: { marginVertical: 15 },
+  downloadButton: { backgroundColor: '#e50914', padding: 12, borderRadius: 5, alignItems: 'center' },
   downloadButtonDisabled: { backgroundColor: '#555' },
-  downloadButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  myListButton: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#1a1a1a', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 999, borderWidth: 1, borderColor: '#333' },
-  myListButtonDisabled: { opacity: 0.5 },
-  myListButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  episodesSection: { marginTop: 28 },
-  episodesTitle: { color: '#fff', fontSize: 18, fontWeight: '600', marginBottom: 12 },
-  episodeList: { borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#1f1f1f', backgroundColor: '#111' },
-  episodeItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: '#1f1f1f' },
-  episodeItemActive: { backgroundColor: '#1f0a0b' },
-  episodeTextBlock: { flex: 1, marginRight: 10 },
-  episodeLabel: { color: '#b3b3b3', fontSize: 12 },
-  episodeTitle: { color: '#fff', fontSize: 15, fontWeight: '500' },
-  description: { color: '#e5e5e5', fontSize: 16, lineHeight: 24, marginTop: 4 },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  errorText: { color: '#e5e5e5', fontSize: 16 },
-  similarSection: { marginTop: 40 },
-  similarGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  similarCard: { borderRadius: 8, overflow: 'hidden', backgroundColor: '#111' },
-  similarPoster: { width: '100%' },
-  similarPosterPlaceholder: { width: '100%', backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' },
-  similarPosterText: { color: '#888', padding: 10, textAlign: 'center' },
+  downloadButtonText: { color: '#fff', fontWeight: 'bold' },
+  errorText: { color: '#e50914', textAlign: 'center', padding: 20 }
 });
