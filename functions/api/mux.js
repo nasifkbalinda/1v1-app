@@ -13,10 +13,10 @@ export async function onRequest(context) {
   }
 
   // ---> YOUR SECURE KEYS <---
-  const MUX_TOKEN_ID = 'e9e97029-07a5-48c3-8afc-20b3b07ca94a';
+  // Ensure these match your Mux Dashboard exactly
+  const MUX_TOKEN_ID = 'e9e97029-07a5-48c3-8afc-20b3b07ca94a'; 
   const MUX_TOKEN_SECRET = 'fBcT0uzhTYHJZBHwtOJW0l6NJ3Jc1YL6x6rfTy1+cJG/7D+vZlj9duYR2Y2lEoCBMY6EIGTxH8F';
   
-  // This is your new VIP Passcode!
   const APP_SECRET_PASSCODE = 'v1-super-admin-2026'; 
 
   const credentials = btoa(`${MUX_TOKEN_ID}:${MUX_TOKEN_SECRET}`);
@@ -27,28 +27,35 @@ export async function onRequest(context) {
     
     if (clientPasscode !== APP_SECRET_PASSCODE) {
       return new Response(JSON.stringify({ 
-        error: { message: `Unauthorized: Bot attack blocked.` } 
+        error: { message: `Unauthorized: Admin passcode mismatch.` } 
       }), { 
         status: 403, 
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } 
       });
     }
 
-    // 3. If passcode matches, process the upload INSTANTLY
+    // 3. PROCESS THE UPLOAD
     const body = await request.json().catch(() => ({}));
     
+    // THE UPDATED PAYLOAD FOR DOWNLOADABLE MP4s
     const payload = { 
       new_asset_settings: { 
-        playback_policy: ['public'], 
+        playback_policies: ['public'], // Changed to plural per latest Mux Docs
         video_quality: 'basic', 
         passthrough: body.passthrough || 'unknown',
-        mp4_support: 'standard' // <--- NEW: THIS IS THE MAGIC DOWNLOAD LINE
+        // THE NEW MAGIC DOWNLOAD LOGIC:
+        static_renditions: [
+          { resolution: 'highest' } 
+        ]
       }, 
       cors_origin: '*' 
     };
     
+    // Add Subtitles if provided
     if (body.subtitleUrl) {
-       payload.new_asset_settings.text_tracks = [{ url: body.subtitleUrl, type: 'subtitles', language_code: 'en', name: 'English', closed_captions: true }];
+       payload.new_asset_settings.text_tracks = [
+         { url: body.subtitleUrl, type: 'subtitles', language_code: 'en', name: 'English', closed_captions: true }
+       ];
     }
 
     const response = await fetch('https://api.mux.com/video/v1/uploads', {
