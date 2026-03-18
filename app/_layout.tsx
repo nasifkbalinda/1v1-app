@@ -6,29 +6,31 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
-// Prevent splash screen from hiding until fonts and auth are ready 
+// Keep the splash screen visible while everything loads
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
-
-  // 1. FONT LOADING (Lowercase 'ionicons' is the secret key) [cite: 3, 12]
-  const [fontsLoaded] = useFonts({
+  
+  // 1. FONT LOADING LOGIC
+  const [fontsLoaded, fontError] = useFonts({
     ...Ionicons.font,
-    'ionicons': require('../public/fonts/Ionicons.ttf'), 
+    'Ionicons': require('../public/fonts/Ionicons.ttf'),
   });
 
+  // 2. AUTH SESSION LOGIC
   const [authLoading, setAuthLoading] = useState(true);
   const [session, setSession] = useState<any>(null);
 
-  // 2. AUTH SESSION CHECK
   useEffect(() => {
+    // Check session on app start
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setAuthLoading(false);
     });
 
+    // Listen for sign-in/sign-out events
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setAuthLoading(false);
@@ -37,22 +39,27 @@ export default function RootLayout() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 3. NAVIGATION & SPLASH SCREEN CONTROL
+  // 3. NAVIGATION GUARD (Updated to allow /movie/ screen)
   useEffect(() => {
-    if (!fontsLoaded || authLoading) return; // Do not render until ready 
+    if (authLoading || !fontsLoaded) return;
 
-    const inAuthGroup = segments[0] === '(tabs)';
+    // Check if the current screen is inside (tabs) or the movie player
+    const inAuthGroup = segments[0] === '(tabs)' || segments[0] === 'movie';
 
     if (!session && inAuthGroup) {
+      // If not logged in but trying to access content, go to login
       router.replace('/login');
     } else if (session && !inAuthGroup) {
+      // If logged in but on login/public screens, go to home
       router.replace('/(tabs)');
     }
-
-    SplashScreen.hideAsync(); // Hide splash screen only when everything is 100% ready
+    
+    // Hide splash screen once fonts AND auth are ready
+    SplashScreen.hideAsync();
   }, [session, authLoading, fontsLoaded, segments]);
 
-  if (!fontsLoaded || authLoading) {
+  // 4. LOADING SCREEN (Wait for Fonts + Auth)
+  if (!fontsLoaded && !fontError || authLoading) {
     return (
       <View style={{ flex: 1, backgroundColor: '#0a0a0a', justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator color="#e50914" size="large" />
@@ -64,6 +71,7 @@ export default function RootLayout() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="login" />
       <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="movie/[id]" options={{ presentation: 'fullScreenModal' }} />
     </Stack>
   );
 }
