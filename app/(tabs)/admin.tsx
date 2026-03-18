@@ -94,6 +94,7 @@ export default function AdminScreen() {
     checkAdmin();
   }, [router]);
 
+  // ---> UPDATED DASHBOARD STATS LOGIC <---
   const fetchDashboardStats = useCallback(async () => {
     setStatsLoading(true);
     try {
@@ -155,7 +156,7 @@ export default function AdminScreen() {
         dau: dauCount || 0,
         wau: wauCount || 0,
         mau: mauCount || 0,
-        leaderboard: sortedLeaderboard
+        leaderboard: sortedLeaderboard.slice(0, 10) // Show top 10
       });
 
     } catch (err) {
@@ -170,7 +171,6 @@ export default function AdminScreen() {
       fetchDashboardStats();
     }
   }, [activeSection, fetchDashboardStats]);
-
 
   const updateTask = (id: string, updates: Partial<UploadTask>) => { 
     setUploadTasks(prev => prev.map(task => task.id === id ? { ...task, ...updates } : task)); 
@@ -487,20 +487,14 @@ export default function AdminScreen() {
     }
   };
 
-  // ---> UPDATED: Safe "Pessimistic" Episode Delete <---
   const handleDeleteEpisode = async (epId: string) => {
     if (Platform.OS === 'web' ? window.confirm("Move episode to trash?") : true) {
-      // 1. Tell the DB to trash it first
       const { error } = await supabase.from('episodes').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', epId);
-      
-      // 2. If the DB blocks it, show the error and stop the function
       if (error) {
         if (Platform.OS === 'web') window.alert("Failed to trash episode: " + error.message);
         else Alert.alert("Error", error.message);
         return; 
       }
-      
-      // 3. Only hide it from the UI if the DB succeeded
       setEditEpisodes(prev => prev.filter(e => e.id !== epId));
       fetchAllMovies();
     }
@@ -578,6 +572,8 @@ export default function AdminScreen() {
   return (
     <View style={styles.container}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        
+        {/* TOP TAB MENU */}
         <View style={styles.tabRow}>
           <Pressable style={[styles.tabButton, activeSection === 'dashboard' && styles.tabButtonActive]} onPress={() => { setActiveSection('dashboard'); setEditingMovie(null); }}><Text style={[styles.tabButtonLabel, activeSection === 'dashboard' && styles.tabButtonLabelActive]}>Dashboard</Text></Pressable>
           <Pressable style={[styles.tabButton, activeSection === 'upload' && styles.tabButtonActive]} onPress={() => { setActiveSection('upload'); setEditingMovie(null); }}><Text style={[styles.tabButtonLabel, activeSection === 'upload' && styles.tabButtonLabelActive]}>Upload</Text></Pressable>
@@ -595,7 +591,6 @@ export default function AdminScreen() {
               </Pressable>
             </View>
 
-            {/* AUDIENCE STATS */}
             <Text style={{color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 15}}>Audience</Text>
             <View style={styles.statsGrid}>
               <View style={[styles.statCard, { width: '23%', borderColor: '#6b7280' }]}>
@@ -603,24 +598,20 @@ export default function AdminScreen() {
                 <Text style={styles.statValue}>{platformStats.totalUsers.toLocaleString()}</Text>
                 <Text style={styles.statLabel}>Total Users</Text>
               </View>
-
               <View style={[styles.statCard, { width: '23%', borderColor: '#10b981' }]}>
                 <Text style={styles.statValue}>{platformStats.dau.toLocaleString()}</Text>
                 <Text style={styles.statLabel}>Daily (DAU)</Text>
               </View>
-
               <View style={[styles.statCard, { width: '23%', borderColor: '#3b82f6' }]}>
                 <Text style={styles.statValue}>{platformStats.wau.toLocaleString()}</Text>
                 <Text style={styles.statLabel}>Weekly (WAU)</Text>
               </View>
-              
               <View style={[styles.statCard, { width: '23%', borderColor: '#8b5cf6' }]}>
                 <Text style={styles.statValue}>{platformStats.mau.toLocaleString()}</Text>
                 <Text style={styles.statLabel}>Monthly (MAU)</Text>
               </View>
             </View>
 
-            {/* CONTENT STATS */}
             <Text style={{color: '#fff', fontSize: 18, fontWeight: 'bold', marginTop: 20, marginBottom: 15}}>Content</Text>
             <View style={styles.statsGrid}>
               <View style={[styles.statCard, { width: '23%' }]}>
@@ -628,19 +619,16 @@ export default function AdminScreen() {
                 <Text style={styles.statValue}>{platformStats.totalViews.toLocaleString()}</Text>
                 <Text style={styles.statLabel}>Total Views</Text>
               </View>
-              
               <View style={[styles.statCard, { width: '23%' }]}>
                 <Ionicons name="film" size={24} color="#e50914" style={styles.statIcon} />
                 <Text style={styles.statValue}>{platformStats.totalMovies}</Text>
                 <Text style={styles.statLabel}>Movies</Text>
               </View>
-
               <View style={[styles.statCard, { width: '23%' }]}>
                 <Ionicons name="tv" size={24} color="#e50914" style={styles.statIcon} />
                 <Text style={styles.statValue}>{platformStats.totalSeries}</Text>
                 <Text style={styles.statLabel}>TV Series</Text>
               </View>
-
               <View style={[styles.statCard, { width: '23%' }]}>
                 <Ionicons name="trophy" size={24} color="#f59e0b" style={styles.statIcon} />
                 <Text style={[styles.statValue, {fontSize: 16}]} numberOfLines={1}>{platformStats.topCategory}</Text>
@@ -656,13 +644,11 @@ export default function AdminScreen() {
               </View>
             </View>
             
-            {/* LEADERBOARD LIST */}
             <View style={styles.leaderboardSection}>
               <View style={{flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 15}}>
                  <Ionicons name="list" size={22} color="#fff" />
                  <Text style={styles.leaderboardSectionTitle}>Content Leaderboard</Text>
               </View>
-              
               {platformStats.leaderboard.length === 0 ? (
                  <Text style={{color: '#666'}}>No content available yet.</Text>
               ) : (
@@ -681,7 +667,6 @@ export default function AdminScreen() {
                  ))
               )}
             </View>
-
           </View>
         )}
 
@@ -763,10 +748,7 @@ export default function AdminScreen() {
                       <Text style={styles.taskTitle}>{task.title}</Text>
                       <View style={{flexDirection: 'row', gap: 15, alignItems: 'center'}}>
                         {task.status === 'error' && (
-                          <Pressable 
-                            onPress={() => handleRetryTask(task)} 
-                            style={{flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#333', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6}}
-                          >
+                          <Pressable onPress={() => handleRetryTask(task)} style={{flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#333', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6}}>
                             <Ionicons name="refresh" size={16} color="#3b82f6" />
                             <Text style={{color: '#3b82f6', fontSize: 12, fontWeight: 'bold'}}>Retry</Text>
                           </Pressable>
@@ -815,12 +797,7 @@ export default function AdminScreen() {
                         {loadingEpisodes ? <ActivityIndicator color="#e50914" /> : (
                           editEpisodes.map(ep => (
                             <View key={ep.id} style={styles.epEditCard}>
-                                <TextInput 
-                                  style={styles.inputSmall} 
-                                  value={ep.title} 
-                                  onChangeText={(val) => updateLocalEpisode(ep.id, 'title', val)} 
-                                  placeholder="Episode Title" 
-                                />
+                                <TextInput style={styles.inputSmall} value={ep.title} onChangeText={(val) => updateLocalEpisode(ep.id, 'title', val)} placeholder="Episode Title" />
                                 <View style={{flexDirection: 'row', gap: 10, marginTop: 5}}>
                                   <Text style={{color: '#888', alignSelf: 'center'}}>S:</Text>
                                   <TextInput style={[styles.inputSmall, {flex: 1}]} value={ep.season_number.toString()} onChangeText={(val) => updateLocalEpisode(ep.id, 'season_number', val)} keyboardType="numeric" />
@@ -865,12 +842,8 @@ export default function AdminScreen() {
               <View style={styles.bulkActionBar}>
                 <Text style={styles.bulkActionText}>{selectedTrashIds.length} Selected</Text>
                 <View style={{flexDirection: 'row', gap: 10}}>
-                  <Pressable style={[styles.bulkActionButton, {backgroundColor: '#16a34a'}]} onPress={handleBulkRestore}>
-                    <Text style={styles.bulkActionButtonText}>Restore</Text>
-                  </Pressable>
-                  <Pressable style={[styles.bulkActionButton, {backgroundColor: '#b91c1c'}]} onPress={handleBulkDeleteForever}>
-                    <Text style={styles.bulkActionButtonText}>Delete</Text>
-                  </Pressable>
+                  <Pressable style={[styles.bulkActionButton, {backgroundColor: '#16a34a'}]} onPress={handleBulkRestore}><Text style={styles.bulkActionButtonText}>Restore</Text></Pressable>
+                  <Pressable style={[styles.bulkActionButton, {backgroundColor: '#b91c1c'}]} onPress={handleBulkDeleteForever}><Text style={styles.bulkActionButtonText}>Delete</Text></Pressable>
                 </View>
               </View>
             )}
@@ -881,16 +854,12 @@ export default function AdminScreen() {
                   <Text style={styles.label}>Trash is empty.</Text>
                 )}
                 
-                {/* Trashed Movies List */}
                 {trashedMovies.map(m => (
                   <View key={`movie-${m.id}`} style={styles.manageItem}>
                     <Pressable style={styles.checkboxZone} onPress={() => toggleTrashSelection(m.id)}>
                       <Ionicons name={selectedTrashIds.includes(m.id) ? "checkbox" : "square-outline"} size={22} color={selectedTrashIds.includes(m.id) ? "#e50914" : "#666"} />
                     </Pressable>
-                    <View style={styles.manageInfo}>
-                      <Text style={styles.manageTitle}>{m.title}</Text>
-                      <Text style={styles.manageMeta}>{m.type}</Text>
-                    </View>
+                    <View style={styles.manageInfo}><Text style={styles.manageTitle}>{m.title}</Text><Text style={styles.manageMeta}>{m.type}</Text></View>
                     <View style={styles.manageActions}>
                       <Pressable style={[styles.manageButton, styles.manageButtonRestore]} onPress={() => handleRestoreMovie(m.id)}>{updatingId === m.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Restore</Text>}</Pressable>
                       <Pressable style={[styles.manageButton, styles.manageButtonTrash]} onPress={() => handleDeleteForeverMovie(m.id)}>{deletingId === m.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Delete</Text>}</Pressable>
@@ -898,16 +867,10 @@ export default function AdminScreen() {
                   </View>
                 ))}
 
-                {/* Trashed Episodes List */}
                 {trashedEpisodes.map(ep => (
                   <View key={`ep-${ep.id}`} style={[styles.manageItem, { borderColor: '#444' }]}>
-                    <View style={{ padding: 5, marginRight: 8 }}>
-                       <Ionicons name="tv-outline" size={22} color="#888" />
-                    </View>
-                    <View style={styles.manageInfo}>
-                      <Text style={styles.manageTitle}>{ep.title}</Text>
-                      <Text style={styles.manageMeta}>Episode • {ep.movies?.title} (S{ep.season_number} E{ep.episode_number})</Text>
-                    </View>
+                    <View style={{ padding: 5, marginRight: 8 }}><Ionicons name="tv-outline" size={22} color="#888" /></View>
+                    <View style={styles.manageInfo}><Text style={styles.manageTitle}>{ep.title}</Text><Text style={styles.manageMeta}>Episode • {ep.movies?.title} (S{ep.season_number} E{ep.episode_number})</Text></View>
                     <View style={styles.manageActions}>
                       <Pressable style={[styles.manageButton, styles.manageButtonRestore]} onPress={() => handleRestoreEpisode(ep.id)}>{updatingId === ep.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Restore</Text>}</Pressable>
                       <Pressable style={[styles.manageButton, styles.manageButtonTrash]} onPress={() => handleDeleteForeverEpisode(ep.id)}>{deletingId === ep.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Delete</Text>}</Pressable>
@@ -1006,5 +969,5 @@ const styles = StyleSheet.create({
   rankText: { fontSize: 16, fontWeight: 'bold', color: '#888', width: 40 },
   leaderboardTitle: { fontSize: 15, fontWeight: 'bold', color: '#fff' },
   leaderboardCategory: { fontSize: 12, color: '#666', marginTop: 2 },
-  leaderboardViews: { fontSize: 16, fontWeight: 'bold', color: '#e50914' },
+  leaderboardViews: { fontSize: 16, fontWeight: 'bold', color: '#e50914' }
 });

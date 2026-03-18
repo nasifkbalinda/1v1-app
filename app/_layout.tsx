@@ -28,12 +28,23 @@ export default function RootLayout() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setAuthLoading(false);
+      
+      // --- HEARTBEAT ON LOAD ---
+      if (session?.user) {
+        supabase.from('profiles').update({ last_active: new Date().toISOString() }).eq('id', session.user.id).then();
+      }
     });
 
     // Listen for sign-in/sign-out events
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setAuthLoading(false);
+      
+      // --- HEARTBEAT ON STATE CHANGE ---
+      // This makes your DAU / WAU / MAU stats work in the admin dashboard!
+      if (session?.user) {
+        supabase.from('profiles').update({ last_active: new Date().toISOString() }).eq('id', session.user.id).then();
+      }
     });
 
     return () => subscription.unsubscribe();
