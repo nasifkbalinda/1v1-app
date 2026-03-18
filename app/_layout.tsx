@@ -6,30 +6,29 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
-// Keep the splash screen visible while everything loads
+// Prevent splash screen from hiding until fonts and auth are ready 
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
-  
-  // 1. FONT LOADING LOGIC (From your old code)
-  const [fontsLoaded, fontError] = useFonts({
+
+  // 1. FONT LOADING (Lowercase 'ionicons' is the secret key) [cite: 3, 12]
+  const [fontsLoaded] = useFonts({
     ...Ionicons.font,
+    'ionicons': require('../public/fonts/Ionicons.ttf'), 
   });
 
-  // 2. AUTH SESSION LOGIC (From our new fix)
   const [authLoading, setAuthLoading] = useState(true);
   const [session, setSession] = useState<any>(null);
 
+  // 2. AUTH SESSION CHECK
   useEffect(() => {
-    // Check session on app start
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setAuthLoading(false);
     });
 
-    // Listen for sign-in/sign-out events
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setAuthLoading(false);
@@ -38,9 +37,9 @@ export default function RootLayout() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 3. NAVIGATION GUARD
+  // 3. NAVIGATION & SPLASH SCREEN CONTROL
   useEffect(() => {
-    if (authLoading || !fontsLoaded) return;
+    if (!fontsLoaded || authLoading) return; // Do not render until ready 
 
     const inAuthGroup = segments[0] === '(tabs)';
 
@@ -49,13 +48,11 @@ export default function RootLayout() {
     } else if (session && !inAuthGroup) {
       router.replace('/(tabs)');
     }
-    
-    // Hide splash screen once fonts AND auth are ready
-    SplashScreen.hideAsync();
+
+    SplashScreen.hideAsync(); // Hide splash screen only when everything is 100% ready
   }, [session, authLoading, fontsLoaded, segments]);
 
-  // 4. LOADING SCREEN (Wait for Fonts + Auth)
-  if (!fontsLoaded && !fontError || authLoading) {
+  if (!fontsLoaded || authLoading) {
     return (
       <View style={{ flex: 1, backgroundColor: '#0a0a0a', justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator color="#e50914" size="large" />
