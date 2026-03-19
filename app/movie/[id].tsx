@@ -6,7 +6,7 @@ import * as FileSystem from 'expo-file-system';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Dimensions, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; };
@@ -14,30 +14,21 @@ type Episode = { id: string; season_number: number; episode_number: number; titl
 
 function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initialTime: number; onTimeUpdate: (time: number) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !url) return;
-
     const isMP4 = url.toLowerCase().includes('.mp4') || url.includes('highest.mp4');
-
     if (isMP4) {
-      video.src = url;
-      video.currentTime = initialTime;
-      video.play().catch(e => console.log("Autoplay blocked:", e));
+      video.src = url; video.currentTime = initialTime; video.play().catch(e => console.log("Autoplay blocked:", e));
     } else {
       import('hls.js').then((HlsModule) => {
         const Hls = HlsModule.default;
         if (Hls.isSupported()) {
           const hls = new Hls({ startPosition: initialTime });
           const hlsUrl = url.includes('.m3u8') ? url : `${url}.m3u8`;
-          hls.loadSource(hlsUrl);
-          hls.attachMedia(video);
-          hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(() => {}); });
+          hls.loadSource(hlsUrl); hls.attachMedia(video); hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(() => {}); });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          video.src = url;
-          video.currentTime = initialTime;
-          video.play().catch(() => {});
+          video.src = url; video.currentTime = initialTime; video.play().catch(() => {});
         }
       });
     }
@@ -57,7 +48,6 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initial
 function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url: string; onError: (msg: string) => void; initialTime: number; movieId: string; userId: string | null; }) {
   const isWeb = Platform.OS === 'web';
   const player = !isWeb ? useVideoPlayer(url, (p) => { p.play(); }) : null;
-
   const hasCountedView = useRef(false);
 
   useEffect(() => {
@@ -76,15 +66,13 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
     const progressTimer = setInterval(() => {
       const currentTime = isWeb && document.querySelector('video') ? document.querySelector('video')?.currentTime || 0 : player?.currentTime || 0;
       if (currentTime > 5) {
-        supabase.from('playback_progress').upsert(
-          { user_id: userId, movie_id: movieId, timestamp_seconds: Math.floor(currentTime), updated_at: new Date().toISOString() }, 
-          { onConflict: 'user_id, movie_id' }
-        ).then();
+        supabase.from('playback_progress').upsert({ user_id: userId, movie_id: movieId, timestamp_seconds: Math.floor(currentTime), updated_at: new Date().toISOString() }, { onConflict: 'user_id, movie_id' }).then();
       }
     }, 10000);
     return () => clearInterval(progressTimer);
   }, [userId, movieId, isWeb, player]);
 
+  // 3. CONSTRAINED VIDEO PLAYER SIZING
   return (
     <View style={styles.videoContainer}>
       {isWeb ? (
@@ -101,6 +89,8 @@ export default function TheaterScreen() {
   const { id, localUri: paramLocalUri } = params;
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isDesktop = width > 768;
   
   const [movie, setMovie] = useState<Movie | null>(null);
   const [loading, setLoading] = useState(true);
@@ -158,16 +148,10 @@ export default function TheaterScreen() {
     if (!movie || isDownloading || isDownloaded) return;
     const activeUrl = currentVideoUrl || movie.video_url;
     if (!activeUrl) return;
-
-    let mp4Url = activeUrl;
-    if (activeUrl.includes('stream.mux.com')) {
-      mp4Url = activeUrl.endsWith('.m3u8') ? activeUrl.replace('.m3u8', '/highest.mp4') : `${activeUrl}/highest.mp4`;
-    }
-
+    let mp4Url = activeUrl.includes('stream.mux.com') ? (activeUrl.endsWith('.m3u8') ? activeUrl.replace('.m3u8', '/highest.mp4') : `${activeUrl}/highest.mp4`) : activeUrl;
     setIsDownloading(true);
     try {
-      const fileUri = `${FileSystem.documentDirectory}${movie.id}.mp4`;
-      const downloadResumable = FileSystem.createDownloadResumable(mp4Url, fileUri, {}, (p) => {
+      const downloadResumable = FileSystem.createDownloadResumable(mp4Url, `${FileSystem.documentDirectory}${movie.id}.mp4`, {}, (p) => {
         setDownloadProgress(Math.round((p.totalBytesWritten / p.totalBytesExpectedToWrite) * 100));
       });
       const result = await downloadResumable.downloadAsync();
@@ -185,14 +169,11 @@ export default function TheaterScreen() {
 
   return (
     <View style={styles.container}>
-      {/* 5. BACK BUTTON SAFELY POSITIONED */}
       <View style={[styles.header, { top: Platform.OS === 'web' ? 20 : insets.top + 50 }]}>
-        <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
-        </Pressable>
+        <Pressable onPress={() => router.back()} style={styles.backButton}><Ionicons name="arrow-back" size={24} color="#fff" /></Pressable>
       </View>
 
-      <ScrollView style={styles.scroll}>
+      <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 60 }}>
         {isPlaying && currentVideoUrl ? (
           <VideoPlayerBlock url={currentVideoUrl} movieId={movie.id} userId={userId} initialTime={0} onError={()=>{}} />
         ) : (
@@ -208,6 +189,7 @@ export default function TheaterScreen() {
           <Text style={styles.title}>{movie.title}</Text>
           <Text style={styles.meta}>{movie.category} • {movie.type}</Text>
 
+          {/* 4. BUTTON IS NO LONGER STRETCHING ACROSS THE SCREEN */}
           <View style={styles.buttonRow}>
             <Pressable style={styles.playBtn} onPress={() => setIsPlaying(true)}>
               <Ionicons name="play" size={20} color="#000" />
@@ -249,7 +231,8 @@ export default function TheaterScreen() {
               <Text style={styles.sectionTitle}>More Like This</Text>
               <View style={styles.grid}>
                 {similarMovies.map(m => (
-                  <Pressable key={m.id} style={styles.gridItem} onPress={() => router.replace(`/movie/${m.id}`)}>
+                  // 4. POSTERS NO LONGER MASSIVE ON DESKTOP
+                  <Pressable key={m.id} style={[styles.gridItem, { width: isDesktop ? 140 : (width - 50) / 3 }]} onPress={() => router.replace(`/movie/${m.id}`)}>
                     <Image source={{ uri: m.poster_url }} style={styles.gridImage} />
                   </Pressable>
                 ))}
@@ -267,26 +250,26 @@ const styles = StyleSheet.create({
   header: { position: 'absolute', left: 15, zIndex: 100 },
   backButton: { backgroundColor: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 20 },
   scroll: { flex: 1 },
-  videoContainer: { width: '100%', aspectRatio: 16/9, backgroundColor: '#000' },
-  posterBox: { width: '100%', aspectRatio: 16/9, backgroundColor: '#111' },
+  videoContainer: { width: '100%', maxWidth: 1200, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#000', marginTop: Platform.OS === 'web' ? 20 : 0 },
+  posterBox: { width: '100%', maxWidth: 1200, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#111', marginTop: Platform.OS === 'web' ? 20 : 0 },
   mainPoster: { width: '100%', height: '100%', opacity: 0.6 },
   playOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
-  details: { padding: 20 },
+  details: { padding: 20, maxWidth: 1200, alignSelf: 'center', width: '100%' },
   title: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
   meta: { color: '#888', marginVertical: 8, fontWeight: '600' },
-  buttonRow: { flexDirection: 'row', gap: 15, marginVertical: 15, alignItems: 'center' },
-  playBtn: { flex: 1, backgroundColor: '#fff', height: 40, borderRadius: 4, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 },
+  buttonRow: { flexDirection: 'row', gap: 20, marginVertical: 15, alignItems: 'center' },
+  playBtn: { backgroundColor: '#fff', paddingHorizontal: 30, height: 40, borderRadius: 4, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 },
   playBtnText: { color: '#000', fontWeight: 'bold', fontSize: 14 },
   actionBtn: { alignItems: 'center', minWidth: 60 },
   actionBtnText: { color: '#888', fontSize: 11, marginTop: 4 },
   description: { color: '#ccc', fontSize: 14, lineHeight: 22, marginTop: 10 },
-  section: { marginTop: 30 },
+  section: { marginTop: 40 },
   sectionTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 15 },
   epRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', padding: 15, borderRadius: 8, marginBottom: 10 },
   epInfo: { flex: 1 },
   epMeta: { color: '#e50914', fontWeight: 'bold', fontSize: 12 },
   epTitle: { color: '#fff', fontSize: 14, marginTop: 2 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  gridItem: { width: (Dimensions.get('window').width - 50) / 3, aspectRatio: 2/3 },
+  gridItem: { aspectRatio: 2/3 },
   gridImage: { width: '100%', height: '100%', borderRadius: 4, backgroundColor: '#111' }
 });

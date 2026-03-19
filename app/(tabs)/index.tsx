@@ -12,7 +12,7 @@ const POSTER_HEIGHT = 180;
 const CW_WIDTH = 280;
 const CW_HEIGHT = 90;
 
-type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; };
+type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; views?: number; };
 const FILTERS = ['All', 'Movies', 'TV Shows', 'Action', 'Comedy', 'Adventure', 'Sci-Fi'] as const;
 type Filter = (typeof FILTERS)[number];
 
@@ -109,6 +109,12 @@ export default function HomeScreen() {
   const heroMovie = !searchQuery.trim() && filteredMovies.length > 0 ? filteredMovies[0] : null;
   const remainingMovies = heroMovie ? filteredMovies.slice(1) : filteredMovies;
   
+  // Trending & Latest Uploads
+  const trendingMovies = useMemo(() => {
+    return [...remainingMovies].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 10);
+  }, [remainingMovies]);
+  const latestUploadsMovies = remainingMovies.slice(0, 12);
+
   const categoryOrder = ['Action', 'Adventure', 'Comedy', 'Drama'];
   const moviesByCategory = useMemo(() => {
     const grouped: Record<string, Movie[]> = {};
@@ -145,7 +151,7 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       
-      {/* 1. Navbar moved further up & Profile icon removed completely */}
+      {/* SPACED OUT NAVBAR: Left group and Right group */}
       <View style={[styles.unifiedHeader, { paddingTop: isDesktop ? 20 : insets.top + 10 }]}>
         
         <View style={styles.headerLeft}>
@@ -162,49 +168,43 @@ export default function HomeScreen() {
         </View>
 
         {isDesktop && (
-          <>
-            <View style={styles.headerCenter}>
+          <View style={styles.headerRight}>
+            <View style={styles.categoryNav}>
               {FILTERS.map((filter) => (
                 <Pressable key={filter} onPress={() => setActiveFilter(filter)}>
                   <Text style={[styles.filterLink, filter === activeFilter && styles.filterLinkActive]}>{filter}</Text>
                 </Pressable>
               ))}
             </View>
-
-            <View style={styles.headerRight}>
-              <View style={styles.searchBox}>
-                <Ionicons name="search" size={16} color="#888" style={{ marginRight: 8 }} />
-                <TextInput style={styles.searchInput} placeholder="Search movies..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} />
-              </View>
+            <View style={styles.searchBox}>
+              <Ionicons name="search" size={16} color="#888" style={{ marginRight: 8 }} />
+              <TextInput style={styles.searchInput} placeholder="Search movies..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} />
             </View>
-          </>
+          </View>
         )}
+
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={moviesRefreshing} onRefresh={handleManualRefresh} tintColor="#e50914" />}>
         
-        {/* 5. Smart image height to avoid cropping heads off */}
         {heroMovie && (
-          <View style={[styles.heroContainer, { height: isDesktop ? Math.min(height * 0.75, 800) : height * 0.5 }]}>
+          <View style={[styles.heroContainer, { height: isDesktop ? Math.min(height * 0.70, 700) : height * 0.5 }]}>
+            {/* Note: Tell admin to upload 1920x1080 Horizontal images for the hero! */}
             <Image source={{ uri: heroMovie.poster_url || '' }} style={styles.heroImage} resizeMode="cover" />
             
-            <LinearGradient colors={['rgba(10,10,10,0.8)', 'transparent']} start={{x: 0, y: 0}} end={{x: 0.6, y: 0}} style={StyleSheet.absoluteFillObject} />
-            <LinearGradient colors={['transparent', 'rgba(10,10,10,0.7)', '#0a0a0a']} locations={[0.5, 0.85, 1]} style={StyleSheet.absoluteFillObject} />
+            <LinearGradient colors={['rgba(10,10,10,0.9)', 'transparent']} start={{x: 0, y: 0}} end={{x: 0.6, y: 0}} style={StyleSheet.absoluteFillObject} />
+            <LinearGradient colors={['transparent', 'rgba(10,10,10,0.8)', '#0a0a0a']} locations={[0.5, 0.85, 1]} style={StyleSheet.absoluteFillObject} />
 
             <View style={[styles.heroContent, isDesktop && styles.heroContentDesktop]}>
-              {/* 2 & 4. Shrunk hero title and buttons */}
               <Text style={[styles.heroTitle, isDesktop && styles.heroTitleDesktop]} numberOfLines={2}>{heroMovie.title}</Text>
-              
               {isDesktop && heroMovie.description && (
                 <Text style={styles.heroDescription} numberOfLines={3}>{heroMovie.description}</Text>
               )}
-
               <View style={styles.heroButtonsRow}>
                 <Pressable style={styles.heroPlayButton} onPress={() => router.push(`/movie/${heroMovie.id}`)}>
                   <Ionicons name="play" size={18} color="#000" />
                   <Text style={styles.heroPlayButtonText}>Play</Text>
                 </Pressable>
-                
                 <Pressable style={styles.heroWatchlistButton} onPress={() => router.push(`/movie/${heroMovie.id}`)}>
                   <Ionicons name="add" size={18} color="#fff" />
                   <Text style={styles.heroWatchlistButtonText}>More Info</Text>
@@ -214,7 +214,6 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* --- MAIN CONTENT GRIDS --- */}
         <View style={[styles.gridContainer, { marginTop: heroMovie ? (isDesktop ? -80 : -20) : 80 }]}>
 
           {!isDesktop && (
@@ -257,6 +256,33 @@ export default function HomeScreen() {
             </View>
           )}
 
+          {/* RESTORED: Trending & Latest */}
+          {trendingMovies.length > 0 && !searchQuery.trim() && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Trending</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
+                {trendingMovies.map((movie) => (
+                  <Pressable key={`trending-${movie.id}`} style={styles.movieCard} onPress={() => router.push(`/movie/${movie.id}`)}>
+                    <Image source={{ uri: movie.poster_url || '' }} style={styles.moviePoster} resizeMode="cover" />
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
+          {latestUploadsMovies.length > 0 && !searchQuery.trim() && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Latest Uploads</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
+                {latestUploadsMovies.map((movie) => (
+                  <Pressable key={`latest-${movie.id}`} style={styles.movieCard} onPress={() => router.push(`/movie/${movie.id}`)}>
+                    <Image source={{ uri: movie.poster_url || '' }} style={styles.moviePoster} resizeMode="cover" />
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
           {sortedCategories.map((category) => {
             const categoryMovies = moviesByCategory[category];
             if (!categoryMovies) return null;
@@ -287,21 +313,19 @@ const styles = StyleSheet.create({
   scrollContent: { paddingBottom: 60 },
   gridContainer: { width: '100%', maxWidth: 1600, alignSelf: 'center', paddingHorizontal: 20, zIndex: 10 },
   
-  // UNIFIED 3-COLUMN HEADER
   unifiedHeader: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 40, width: '100%', maxWidth: 1600, alignSelf: 'center' },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center' },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 30 },
   logo: { fontSize: 32, fontWeight: 'bold', color: '#e50914', marginRight: 40 },
   primaryNav: { flexDirection: 'row', gap: 24 },
   navItem: { paddingVertical: 5 },
   navText: { color: '#e5e5e5', fontSize: 13, fontWeight: '600' },
   navTextActive: { color: '#fff', fontWeight: 'bold' },
   
-  headerCenter: { flexDirection: 'row', justifyContent: 'center', gap: 20, flex: 2 },
+  categoryNav: { flexDirection: 'row', gap: 20 },
   filterLink: { color: '#aaa', fontSize: 13, fontWeight: '500' },
   filterLinkActive: { color: '#fff', fontWeight: 'bold' },
-
-  headerRight: { flexDirection: 'row', justifyContent: 'flex-end', flex: 1 },
-  searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(30,30,30,0.8)', borderRadius: 4, paddingHorizontal: 12, paddingVertical: 8, width: 220, borderWidth: 1, borderColor: '#333' },
+  searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(30,30,30,0.8)', borderRadius: 4, paddingHorizontal: 12, paddingVertical: 6, width: 220, borderWidth: 1, borderColor: '#333' },
   searchInput: { flex: 1, color: '#fff', fontSize: 13, outlineStyle: 'none' },
 
   mobileSearchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', borderRadius: 8, marginBottom: 16, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: '#2a2a2a' },
@@ -310,21 +334,19 @@ const styles = StyleSheet.create({
   mobileFilterPillText: { color: '#bdbdbd', fontSize: 12, fontWeight: 'bold' },
   mobileFilterPillTextActive: { color: '#fff' },
 
-  // HERO STYLES
   heroContainer: { width: '100%', position: 'relative' },
   heroImage: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%', opacity: 0.9 },
   heroContent: { position: 'absolute', bottom: '15%', left: 20, right: 20, zIndex: 10 },
   heroContentDesktop: { left: 40, width: '45%', bottom: '20%' },
   heroTitle: { color: '#fff', fontSize: 24, fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 4, marginBottom: 8 },
-  heroTitleDesktop: { fontSize: 32, lineHeight: 38 },
-  heroDescription: { color: '#e5e5e5', fontSize: 13, lineHeight: 20, marginBottom: 16, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  heroTitleDesktop: { fontSize: 34, lineHeight: 40 },
+  heroDescription: { color: '#e5e5e5', fontSize: 14, lineHeight: 20, marginBottom: 16, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
   heroButtonsRow: { flexDirection: 'row', gap: 10 },
   heroPlayButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingVertical: 8, paddingHorizontal: 20, borderRadius: 4, gap: 6 },
   heroPlayButtonText: { color: '#000', fontSize: 14, fontWeight: 'bold' },
   heroWatchlistButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(51, 51, 51, 0.8)', paddingVertical: 8, paddingHorizontal: 20, borderRadius: 4, gap: 6 },
   heroWatchlistButtonText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
 
-  // SECTION STYLES
   section: { marginBottom: 30 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#e5e5e5', marginBottom: 12 },
   rowScroll: { gap: 12, paddingRight: 40 },
