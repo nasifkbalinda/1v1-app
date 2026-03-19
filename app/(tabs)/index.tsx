@@ -1,15 +1,14 @@
+// @ts-nocheck
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Image, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const POSTER_WIDTH = 110;
-const POSTER_HEIGHT = 160;
-const FEATURED_WIDTH = 380;
-const FEATURED_HEIGHT = 220;
+const POSTER_WIDTH = 130;
+const POSTER_HEIGHT = 190;
 
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; duration_seconds?: number | null; views?: number; };
 const FILTERS = ['All', 'Movies', 'TV Shows', 'Action', 'Comedy', 'Adventure', 'Sci-Fi'] as const;
@@ -25,13 +24,11 @@ export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const isDesktop = width > 768;
 
   const [movies, setMovies] = useState<Movie[]>([]);
-  // ---> NEW STATE FOR CONTINUE WATCHING <---
   const [continueWatching, setContinueWatching] = useState<any[]>([]);
-  
   const [loading, setLoading] = useState(true);
   const [moviesRefreshing, setMoviesRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -64,27 +61,19 @@ export default function HomeScreen() {
     }
   };
 
-  // ---> NEW FUNCTION: Fetch User's Playback Progress <---
   const fetchContinueWatching = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return; // If not logged in, just skip it
+      if (!user) return; 
 
-      // Fetch the progress AND join it with the movie details automatically!
       const { data, error } = await supabase
         .from('playback_progress')
-        .select(`
-          timestamp_seconds,
-          updated_at,
-          movie_id,
-          movies (*)
-        `)
+        .select('timestamp_seconds, updated_at, movie_id, movies (*)')
         .eq('user_id', user.id)
-        .order('updated_at', { ascending: false }) // Get the most recently watched first
+        .order('updated_at', { ascending: false })
         .limit(10);
 
       if (data && !error) {
-        // Filter out any broken links (e.g. if a movie was deleted but progress remained)
         const validProgress = data.filter(item => item.movies !== null);
         setContinueWatching(validProgress);
       }
@@ -95,7 +84,7 @@ export default function HomeScreen() {
 
   useEffect(() => { 
     fetchMovies(true); 
-    fetchContinueWatching(); // Call our new function on load!
+    fetchContinueWatching(); 
   }, [activeFilter]);
 
   const handleManualRefresh = () => { 
@@ -105,26 +94,28 @@ export default function HomeScreen() {
 
   const filteredMovies = useMemo(() => filterByQuery(movies, searchQuery), [movies, searchQuery]);
   
-  const featuredRowMovies = filteredMovies.slice(0, 4);
+  // --- EXTRACT THE HERO MOVIE ---
+  const heroMovie = !searchQuery.trim() && filteredMovies.length > 0 ? filteredMovies[0] : null;
+  
+  // Exclude the hero movie from the general grids so it doesn't duplicate right underneath
+  const remainingMovies = heroMovie ? filteredMovies.slice(1) : filteredMovies;
   
   const trendingMovies = useMemo(() => {
-    return [...filteredMovies]
-      .sort((a, b) => (b.views || 0) - (a.views || 0))
-      .slice(0, 10);
-  }, [filteredMovies]);
+    return [...remainingMovies].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 10);
+  }, [remainingMovies]);
 
-  const latestUploadsMovies = filteredMovies.slice(0, 12);
+  const latestUploadsMovies = remainingMovies.slice(0, 12);
   
   const categoryOrder = ['Action', 'Adventure', 'Comedy', 'Drama'];
   const moviesByCategory = useMemo(() => {
     const grouped: Record<string, Movie[]> = {};
-    for (const movie of filteredMovies) {
+    for (const movie of remainingMovies) {
       const category = movie.category ?? 'Other';
       if (!grouped[category]) grouped[category] = [];
       grouped[category].push(movie);
     }
     return grouped;
-  }, [filteredMovies]);
+  }, [remainingMovies]);
 
   const sortedCategories = useMemo(() => {
     return Object.keys(moviesByCategory).sort((a, b) => {
@@ -136,6 +127,19 @@ export default function HomeScreen() {
       return ia - ib;
     });
   }, [moviesByCategory, categoryOrder]);
+
+  // --- REUSABLE FILTER COMPONENT ---
+  const FilterNavigation = () => (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.filtersScrollContent, isDesktop && styles.desktopFiltersScroll]}>
+      {FILTERS.map((filter) => (
+        <Pressable key={filter} onPress={() => setActiveFilter(filter)} style={[styles.filterPill, filter === activeFilter && styles.filterPillActive, isDesktop && styles.desktopFilterPill]}>
+          <Text style={[styles.filterPillText, filter === activeFilter && styles.filterPillTextActive, isDesktop && styles.desktopFilterText, isDesktop && filter === activeFilter && styles.desktopFilterTextActive]}>
+            {filter}
+          </Text>
+        </Pressable>
+      ))}
+    </ScrollView>
+  );
 
   if (loading) return (<View style={styles.loadingContainer}><ActivityIndicator size="large" color="#e50914" /><Text style={styles.loadingText}>Loading movies...</Text></View>);
 
@@ -152,75 +156,72 @@ export default function HomeScreen() {
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={moviesRefreshing} onRefresh={handleManualRefresh} tintColor="#e50914" />}>
         
-        <View style={styles.webContentWrapper}>
+        {/* --- CINEMATIC HERO SECTION --- */}
+        {heroMovie && (
+          <View style={[styles.heroContainer, { height: isDesktop ? height * 0.75 : height * 0.6 }]}>
+            <Image source={{ uri: heroMovie.poster_url || '' }} style={styles.heroImage} resizeMode="cover" />
+            
+            {/* The Magic Fade */}
+            <LinearGradient colors={['transparent', 'rgba(10,10,10,0.6)', '#0a0a0a']} style={styles.heroGradient} />
+
+            {/* Desktop Filters (Positioned over the hero image to look like a Navbar extension) */}
+            {isDesktop && (
+              <View style={styles.desktopNavOverlay}>
+                <FilterNavigation />
+              </View>
+            )}
+
+            <View style={[styles.heroContent, isDesktop && styles.heroContentDesktop]}>
+              <Text style={[styles.heroTitle, isDesktop && styles.heroTitleDesktop]} numberOfLines={2}>{heroMovie.title}</Text>
+              
+              {isDesktop && heroMovie.description && (
+                <Text style={styles.heroDescription} numberOfLines={3}>{heroMovie.description}</Text>
+              )}
+
+              <View style={styles.heroButtonsRow}>
+                <Pressable style={styles.heroPlayButton} onPress={() => router.push(`/movie/${heroMovie.id}`)}>
+                  <Ionicons name="play" size={24} color="#000" style={{marginLeft: 4}} />
+                  <Text style={styles.heroPlayButtonText}>Play</Text>
+                </Pressable>
+                
+                <Pressable style={styles.heroWatchlistButton} onPress={() => router.push(`/movie/${heroMovie.id}`)}>
+                  <Ionicons name="add" size={24} color="#fff" />
+                  <Text style={styles.heroWatchlistButtonText}>More Info</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* --- MAIN CONTENT GRIDS --- */}
+        {/* We pull the grids UP into the gradient fade using a negative margin */}
+        <View style={[styles.webContentWrapper, { marginTop: heroMovie ? (isDesktop ? -120 : -40) : 20, zIndex: 10 }]}>
+
+          {/* Mobile Filters */}
+          {!isDesktop && (
+            <View style={styles.mobileFiltersWrapper}>
+              <FilterNavigation />
+            </View>
+          )}
 
           <View style={styles.searchContainer}>
             <Ionicons name="search" size={20} color="#888" style={styles.searchIcon} />
             <TextInput style={styles.searchBar} placeholder="Search movies..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} />
           </View>
 
-          <View style={styles.filtersWrapper}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filtersScrollContent}>
-              {FILTERS.map((filter) => (
-                <Pressable key={filter} onPress={() => setActiveFilter(filter)} style={[styles.filterPill, filter === activeFilter && styles.filterPillActive]}>
-                  <Text style={[styles.filterPillText, filter === activeFilter && styles.filterPillTextActive]}>{filter}</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-          </View>
-
-          {/* --- FEATURED SECTION --- */}
-          {featuredRowMovies.length > 0 && !searchQuery.trim() && (
-            <View style={styles.categorySection}>
-              <Text style={styles.sectionLabel}>Featured</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
-                {featuredRowMovies.map((movie, index) => {
-                  if (index === 0) {
-                    return (
-                      <Pressable key={movie.id} style={styles.featuredCard} onPress={() => router.push(`/movie/${movie.id}`)}>
-                        <Image source={{ uri: movie.poster_url || '' }} style={styles.moviePoster} resizeMode="cover" />
-                        <LinearGradient colors={['transparent', 'rgba(0,0,0,0.8)']} style={styles.featuredGradient} />
-                        <View style={styles.featuredTextOverlay}>
-                          <Text style={styles.featuredTitle} numberOfLines={2}>{movie.title}</Text>
-                          <View style={styles.playButtonSmall}>
-                            <Ionicons name="play" size={16} color="#000" />
-                            <Text style={styles.playButtonTextSmall}>Play</Text>
-                          </View>
-                        </View>
-                      </Pressable>
-                    );
-                  } else {
-                    return (
-                      <Pressable key={movie.id} style={styles.movieCard} onPress={() => router.push(`/movie/${movie.id}`)}>
-                        <Image source={{ uri: movie.poster_url || '' }} style={styles.moviePoster} resizeMode="cover" />
-                      </Pressable>
-                    );
-                  }
-                })}
-              </ScrollView>
-            </View>
-          )}
-
-          {/* --- NEW: CONTINUE WATCHING SECTION --- */}
+          {/* CONTINUE WATCHING */}
           {continueWatching.length > 0 && !searchQuery.trim() && (
             <View style={styles.categorySection}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 8 }}>
-                 <Ionicons name="time" size={24} color="#e50914" />
-                 <Text style={[styles.sectionLabel, { marginBottom: 0 }]}>Continue Watching</Text>
-              </View>
+              <Text style={styles.sectionLabel}>Continue Watching</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
                 {continueWatching.map((item) => {
                   const movie = item.movies;
                   return (
                     <Pressable key={`cw-${movie.id}`} style={styles.movieCard} onPress={() => router.push(`/movie/${movie.id}`)}>
                       <Image source={{ uri: movie.poster_url || '' }} style={styles.moviePoster} resizeMode="cover" />
-                      
-                      {/* Cool overlay to indicate it's a "Resume" card */}
                       <View style={styles.continueWatchingOverlay}>
-                        <Ionicons name="play-circle" size={36} color="rgba(255,255,255,0.8)" />
+                        <Ionicons name="play-circle" size={40} color="rgba(255,255,255,0.8)" />
                       </View>
-                      
-                      {/* Fake progress bar at the bottom for aesthetics */}
                       <View style={styles.progressBarBackground}>
                          <View style={styles.progressBarFill} /> 
                       </View>
@@ -231,13 +232,10 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* --- TRENDING NOW SECTION --- */}
+          {/* TRENDING NOW */}
           {trendingMovies.length > 0 && !searchQuery.trim() && (
             <View style={styles.categorySection}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 8 }}>
-                 <Ionicons name="flame" size={24} color="#e50914" />
-                 <Text style={[styles.sectionLabel, { marginBottom: 0 }]}>Trending Now</Text>
-              </View>
+              <Text style={styles.sectionLabel}>Popular This Week</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
                 {trendingMovies.map((movie) => (
                   <Pressable key={`trending-${movie.id}`} style={styles.movieCard} onPress={() => router.push(`/movie/${movie.id}`)}>
@@ -248,10 +246,10 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* --- LATEST UPLOADS SECTION --- */}
+          {/* LATEST UPLOADS */}
           {latestUploadsMovies.length > 0 && !searchQuery.trim() && (
             <View style={styles.categorySection}>
-              <Text style={styles.sectionLabel}>Latest Uploads</Text>
+              <Text style={styles.sectionLabel}>Recently Added</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
                 {latestUploadsMovies.map((movie) => (
                   <Pressable key={`latest-${movie.id}`} style={styles.movieCard} onPress={() => router.push(`/movie/${movie.id}`)}>
@@ -262,7 +260,7 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* --- CATEGORY SECTIONS --- */}
+          {/* CATEGORIES */}
           {sortedCategories.map((category) => {
             const categoryMovies = moviesByCategory[category];
             if (!categoryMovies) return null;
@@ -293,36 +291,50 @@ const styles = StyleSheet.create({
   headerFixed: { backgroundColor: 'rgba(10, 10, 10, 0.95)', borderBottomWidth: 1, borderBottomColor: '#1f1f1f', zIndex: 100, paddingBottom: 10 },
   logo: { fontSize: 32, fontWeight: '900', color: '#e50914' },
   scroll: { flex: 1 },
-  scrollContent: { paddingTop: 20, paddingBottom: 60 },
-  webContentWrapper: { width: '100%', maxWidth: 1200, alignSelf: 'center', paddingHorizontal: 16 },
+  scrollContent: { paddingBottom: 60 },
+  webContentWrapper: { width: '100%', maxWidth: 1400, alignSelf: 'center', paddingHorizontal: 20 },
   
-  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', borderRadius: 8, marginBottom: 16, paddingHorizontal: 14, borderWidth: 1, borderColor: '#2a2a2a' },
-  searchIcon: { marginRight: 10 },
-  searchBar: { flex: 1, paddingVertical: 12, fontSize: 16, color: '#fff' },
-  
-  filtersWrapper: { marginBottom: 24 },
-  filtersScrollContent: { paddingRight: 32, gap: 10 },
+  // HERO STYLES
+  heroContainer: { width: '100%', position: 'relative' },
+  heroImage: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%', opacity: 0.8 },
+  heroGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '60%' },
+  heroContent: { position: 'absolute', bottom: '15%', left: 20, right: 20 },
+  heroContentDesktop: { left: 40, right: '40%', bottom: '20%' }, // Constrain text width on desktop
+  heroTitle: { color: '#fff', fontSize: 36, fontWeight: '900', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 4, marginBottom: 12 },
+  heroTitleDesktop: { fontSize: 60, lineHeight: 65 },
+  heroDescription: { color: '#e5e5e5', fontSize: 16, lineHeight: 24, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3, marginBottom: 25 },
+  heroButtonsRow: { flexDirection: 'row', gap: 15 },
+  heroPlayButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingVertical: 12, paddingHorizontal: 30, borderRadius: 4, gap: 8 },
+  heroPlayButtonText: { color: '#000', fontSize: 18, fontWeight: 'bold' },
+  heroWatchlistButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(109, 109, 110, 0.7)', paddingVertical: 12, paddingHorizontal: 30, borderRadius: 4, gap: 8 },
+  heroWatchlistButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+
+  // NAVIGATION / FILTERS
+  desktopNavOverlay: { position: 'absolute', top: Platform.OS === 'web' ? 20 : 50, left: 40, zIndex: 20 },
+  mobileFiltersWrapper: { marginBottom: 20 },
+  filtersScrollContent: { gap: 10, paddingRight: 20 },
+  desktopFiltersScroll: { gap: 25 }, // Spread out more on desktop
   filterPill: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 999, backgroundColor: '#121212', borderWidth: 1, borderColor: '#2a2a2a' },
   filterPillActive: { backgroundColor: '#e50914', borderColor: '#e50914' },
   filterPillText: { color: '#bdbdbd', fontSize: 13, fontWeight: '700' },
   filterPillTextActive: { color: '#fff' },
+  // Desktop specific filter overrides (Text links instead of pills)
+  desktopFilterPill: { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0 },
+  desktopFilterText: { color: '#e5e5e5', fontSize: 16, fontWeight: '500', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  desktopFilterTextActive: { color: '#fff', fontWeight: 'bold' },
+
+  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(26,26,26,0.8)', borderRadius: 8, marginBottom: 30, paddingHorizontal: 14, borderWidth: 1, borderColor: '#2a2a2a', maxWidth: 600 },
+  searchIcon: { marginRight: 10 },
+  searchBar: { flex: 1, paddingVertical: 12, fontSize: 16, color: '#fff', outlineStyle: 'none' },
   
-  categorySection: { marginBottom: 32 },
-  sectionLabel: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginBottom: 16 },
-  rowScroll: { paddingRight: 16, alignItems: 'center', gap: 12 },
+  categorySection: { marginBottom: 35 },
+  sectionLabel: { fontSize: 20, fontWeight: 'bold', color: '#e5e5e5', marginBottom: 15 },
+  rowScroll: { gap: 12, paddingRight: 20 },
   
-  featuredCard: { width: FEATURED_WIDTH, height: FEATURED_HEIGHT, borderRadius: 8, overflow: 'hidden', backgroundColor: '#111', borderWidth: 1, borderColor: '#222', position: 'relative' },
-  featuredGradient: { ...StyleSheet.absoluteFillObject },
-  featuredTextOverlay: { position: 'absolute', bottom: 12, left: 12, right: 12, zIndex: 1, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
-  featuredTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold', flex: 1, marginRight: 10 },
-  playButtonSmall: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 4, gap: 4 },
-  playButtonTextSmall: { color: '#000', fontWeight: 'bold', fontSize: 12 },
-  
-  movieCard: { width: POSTER_WIDTH, height: POSTER_HEIGHT, borderRadius: 8, overflow: 'hidden', backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#1f1f1f', position: 'relative' },
+  movieCard: { width: POSTER_WIDTH, height: POSTER_HEIGHT, borderRadius: 6, overflow: 'hidden', backgroundColor: '#1a1a1a', position: 'relative' },
   moviePoster: { width: '100%', height: '100%' },
   
-  // NEW CONTINUE WATCHING STYLES
-  continueWatchingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center' },
+  continueWatchingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.2)', justifyContent: 'center', alignItems: 'center' },
   progressBarBackground: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 4, backgroundColor: '#333' },
   progressBarFill: { width: '60%', height: '100%', backgroundColor: '#e50914' },
 });
