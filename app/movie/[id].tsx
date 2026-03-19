@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -65,53 +65,62 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initial
   );
 }
 
-// --- 2. HYBRID PLAYER BLOCK (WITH THE RESTORED BRAIN) ---
+// --- 2. HYBRID PLAYER BLOCK (FOOLPROOF VIEW COUNTER) ---
 function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url: string; onError: (msg: string) => void; initialTime: number; movieId: string; userId: string | null; }) {
   const isWeb = Platform.OS === 'web';
   const player = !isWeb ? useVideoPlayer(url, (p) => { p.play(); }) : null;
 
   const hasCountedView = useRef(false);
-  const lastUpdateRef = useRef(0);
 
-  // THIS IS THE BRAIN THAT COUNTS VIEWS
-  const handleProgress = useCallback((currentTime: number) => {
-    // Wait until 5 seconds have played to count a view
-    if (!movieId || currentTime < 5) return;
+  // 1. THE GUARANTEED VIEW COUNTER (Fires exactly at 6 seconds)
+  useEffect(() => {
+    const viewTimer = setTimeout(() => {
+      if (!hasCountedView.current) {
+        hasCountedView.current = true;
+        
+        console.log("6 Seconds Reached! Sending View for Movie ID:", movieId); // Debug log
+        
+        // Pass the ID as both a number and string just in case to avoid database rejection
+        const safeId = isNaN(Number(movieId)) ? movieId : Number(movieId);
 
-    // 1. Send the View Count to Supabase (For Everyone)
-    if (!hasCountedView.current) {
-      hasCountedView.current = true;
-      supabase.rpc('increment_view_count', { row_id: movieId }).then(({ error }) => {
-        if (error) console.error("View Count Error:", error.message);
-      });
-    }
+        supabase.rpc('increment_view_count', { row_id: safeId }).then(({ error }) => {
+          if (error) {
+             console.error("View Count Failed:", error.message);
+          } else {
+             console.log("View Counted Successfully!");
+          }
+        });
+      }
+    }, 6000);
 
-    // 2. Save Playback Progress (Only if logged in)
-    if (userId) {
-      const now = Date.now();
-      if (now - lastUpdateRef.current > 10000) { 
+    return () => clearTimeout(viewTimer);
+  }, [movieId]);
+
+  // 2. SAVE RESUME PROGRESS (Runs every 10 seconds for logged-in users)
+  useEffect(() => {
+    if (!userId || !movieId) return;
+    
+    const progressTimer = setInterval(() => {
+      // Get time differently based on web vs mobile
+      const currentTime = isWeb && document.querySelector('video') 
+        ? document.querySelector('video')?.currentTime || 0
+        : player?.currentTime || 0;
+
+      if (currentTime > 5) {
         supabase.from('playback_progress').upsert(
           { user_id: userId, movie_id: movieId, timestamp_seconds: Math.floor(currentTime), updated_at: new Date().toISOString() }, 
           { onConflict: 'user_id, movie_id' }
         ).then();
-        lastUpdateRef.current = now;
       }
-    }
-  }, [userId, movieId]);
+    }, 10000);
 
-  // Tell Mobile app to check the time every 2 seconds
-  useEffect(() => {
-    if (isWeb || !player) return;
-    const interval = setInterval(() => { 
-      if (player.playing) handleProgress(player.currentTime); 
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [player, isWeb, handleProgress]);
+    return () => clearInterval(progressTimer);
+  }, [userId, movieId, isWeb, player]);
 
   return (
     <View style={styles.videoContainer}>
       {isWeb ? (
-        <WebHLSPlayer url={url} initialTime={initialTime} onTimeUpdate={handleProgress} />
+        <WebHLSPlayer url={url} initialTime={initialTime} onTimeUpdate={() => {}} />
       ) : (
         <VideoView 
           style={{ flex: 1 }} 
