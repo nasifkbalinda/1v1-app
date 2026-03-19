@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Dimensions, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -65,15 +65,53 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initial
   );
 }
 
-// --- 2. HYBRID PLAYER BLOCK ---
+// --- 2. HYBRID PLAYER BLOCK (WITH THE RESTORED BRAIN) ---
 function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url: string; onError: (msg: string) => void; initialTime: number; movieId: string; userId: string | null; }) {
   const isWeb = Platform.OS === 'web';
   const player = !isWeb ? useVideoPlayer(url, (p) => { p.play(); }) : null;
 
+  const hasCountedView = useRef(false);
+  const lastUpdateRef = useRef(0);
+
+  // THIS IS THE BRAIN THAT COUNTS VIEWS
+  const handleProgress = useCallback((currentTime: number) => {
+    // Wait until 5 seconds have played to count a view
+    if (!movieId || currentTime < 5) return;
+
+    // 1. Send the View Count to Supabase (For Everyone)
+    if (!hasCountedView.current) {
+      hasCountedView.current = true;
+      supabase.rpc('increment_view_count', { row_id: movieId }).then(({ error }) => {
+        if (error) console.error("View Count Error:", error.message);
+      });
+    }
+
+    // 2. Save Playback Progress (Only if logged in)
+    if (userId) {
+      const now = Date.now();
+      if (now - lastUpdateRef.current > 10000) { 
+        supabase.from('playback_progress').upsert(
+          { user_id: userId, movie_id: movieId, timestamp_seconds: Math.floor(currentTime), updated_at: new Date().toISOString() }, 
+          { onConflict: 'user_id, movie_id' }
+        ).then();
+        lastUpdateRef.current = now;
+      }
+    }
+  }, [userId, movieId]);
+
+  // Tell Mobile app to check the time every 2 seconds
+  useEffect(() => {
+    if (isWeb || !player) return;
+    const interval = setInterval(() => { 
+      if (player.playing) handleProgress(player.currentTime); 
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [player, isWeb, handleProgress]);
+
   return (
     <View style={styles.videoContainer}>
       {isWeb ? (
-        <WebHLSPlayer url={url} initialTime={initialTime} onTimeUpdate={() => {}} />
+        <WebHLSPlayer url={url} initialTime={initialTime} onTimeUpdate={handleProgress} />
       ) : (
         <VideoView 
           style={{ flex: 1 }} 
@@ -92,7 +130,6 @@ export default function TheaterScreen() {
   const { id, localUri: paramLocalUri } = params;
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const isWeb = Platform.OS === 'web';
   
   const [movie, setMovie] = useState<Movie | null>(null);
   const [loading, setLoading] = useState(true);
@@ -125,7 +162,7 @@ export default function TheaterScreen() {
 
         // Fetch Episodes if Series
         if (movieData.type === 'TV Series') {
-          const { data: epData } = await supabase.from('episodes').select('*').eq('movie_id', id).eq('status', 'active').order('episode_number');
+          const { data: epData } = await supabase.from('episodes').select('*').eq('movie_id', id).eq('status', 'active').order('season_number').order('episode_number');
           setEpisodes(epData || []);
         }
 
@@ -229,7 +266,7 @@ export default function TheaterScreen() {
               <Text style={styles.actionBtnText}>My List</Text>
             </Pressable>
 
-            {!isDownloaded && (
+            {!isDownloaded && !isOfflineMode && Platform.OS !== 'web' && (
               <Pressable style={styles.actionBtn} onPress={handleDownload} disabled={isDownloading}>
                 <Ionicons name="download-outline" size={24} color={isDownloading ? "#555" : "#fff"} />
                 <Text style={styles.actionBtnText}>{isDownloading ? `${downloadProgress}%` : 'Download'}</Text>
@@ -264,7 +301,7 @@ export default function TheaterScreen() {
               <Text style={styles.sectionTitle}>More Like This</Text>
               <View style={styles.grid}>
                 {similarMovies.map(m => (
-                  <Pressable key={m.id} style={styles.gridItem} onPress={() => router.push(`/movie/${m.id}`)}>
+                  <Pressable key={m.id} style={styles.gridItem} onPress={() => router.replace(`/movie/${m.id}`)}>
                     <Image source={{ uri: m.poster_url }} style={styles.gridImage} />
                   </Pressable>
                 ))}
