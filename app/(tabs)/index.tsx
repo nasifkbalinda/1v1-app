@@ -4,20 +4,23 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const POSTER_WIDTH = 130;
-const POSTER_HEIGHT = 190;
+// Adjusted professional sizing
+const POSTER_WIDTH = 150;
+const POSTER_HEIGHT = 225;
+const CW_WIDTH = 320;
+const CW_HEIGHT = 120;
 
-type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; duration_seconds?: number | null; views?: number; };
+type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; views?: number; };
 const FILTERS = ['All', 'Movies', 'TV Shows', 'Action', 'Comedy', 'Adventure', 'Sci-Fi'] as const;
 type Filter = (typeof FILTERS)[number];
 
 function filterByQuery(movies: Movie[], query: string): Movie[] {
   if (!query.trim()) return movies;
   const lower = query.trim().toLowerCase();
-  return movies.filter((m) => m.title.toLowerCase().includes(lower) || (m.category?.toLowerCase().includes(lower) ?? false) || (m.type?.toLowerCase().includes(lower) ?? false) || (m.description?.toLowerCase().includes(lower) ?? false));
+  return movies.filter((m) => m.title.toLowerCase().includes(lower) || (m.category?.toLowerCase().includes(lower) ?? false) || (m.type?.toLowerCase().includes(lower) ?? false));
 }
 
 export default function HomeScreen() {
@@ -54,7 +57,6 @@ export default function HomeScreen() {
       setMovies(data ?? []);
     } catch (err) {
       console.error('Error fetching movies:', err);
-      setMovies([]);
     } finally {
       setLoading(false);
       setMoviesRefreshing(false);
@@ -87,17 +89,8 @@ export default function HomeScreen() {
     fetchContinueWatching(); 
   }, [activeFilter]);
 
-  const handleManualRefresh = () => { 
-    fetchMovies(false); 
-    fetchContinueWatching(); 
-  };
-
   const filteredMovies = useMemo(() => filterByQuery(movies, searchQuery), [movies, searchQuery]);
-  
-  // --- EXTRACT THE HERO MOVIE ---
   const heroMovie = !searchQuery.trim() && filteredMovies.length > 0 ? filteredMovies[0] : null;
-  
-  // Exclude the hero movie from the general grids so it doesn't duplicate right underneath
   const remainingMovies = heroMovie ? filteredMovies.slice(1) : filteredMovies;
   
   const trendingMovies = useMemo(() => {
@@ -106,87 +99,81 @@ export default function HomeScreen() {
 
   const latestUploadsMovies = remainingMovies.slice(0, 12);
   
-  const categoryOrder = ['Action', 'Adventure', 'Comedy', 'Drama'];
-  const moviesByCategory = useMemo(() => {
-    const grouped: Record<string, Movie[]> = {};
-    for (const movie of remainingMovies) {
-      const category = movie.category ?? 'Other';
-      if (!grouped[category]) grouped[category] = [];
-      grouped[category].push(movie);
-    }
-    return grouped;
-  }, [remainingMovies]);
-
-  const sortedCategories = useMemo(() => {
-    return Object.keys(moviesByCategory).sort((a, b) => {
-      const ia = categoryOrder.indexOf(a);
-      const ib = categoryOrder.indexOf(b);
-      if (ia === -1 && ib === -1) return a.localeCompare(b);
-      if (ia === -1) return 1;
-      if (ib === -1) return -1;
-      return ia - ib;
-    });
-  }, [moviesByCategory, categoryOrder]);
-
-  // --- REUSABLE FILTER COMPONENT ---
-  const FilterNavigation = () => (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.filtersScrollContent, isDesktop && styles.desktopFiltersScroll]}>
-      {FILTERS.map((filter) => (
-        <Pressable key={filter} onPress={() => setActiveFilter(filter)} style={[styles.filterPill, filter === activeFilter && styles.filterPillActive, isDesktop && styles.desktopFilterPill]}>
-          <Text style={[styles.filterPillText, filter === activeFilter && styles.filterPillTextActive, isDesktop && styles.desktopFilterText, isDesktop && filter === activeFilter && styles.desktopFilterTextActive]}>
-            {filter}
-          </Text>
-        </Pressable>
-      ))}
-    </ScrollView>
-  );
-
-  if (loading) return (<View style={styles.loadingContainer}><ActivityIndicator size="large" color="#e50914" /><Text style={styles.loadingText}>Loading movies...</Text></View>);
+  if (loading) return (<View style={styles.loadingContainer}><ActivityIndicator size="large" color="#e50914" /></View>);
 
   return (
     <View style={styles.container}>
       
-      {!isDesktop && (
-        <View style={[styles.headerFixed, { paddingTop: insets.top + 10 }]}>
-          <View style={styles.webContentWrapper}>
-            <Text style={styles.logo}>V</Text>
-          </View>
-        </View>
-      )}
+      {/* --- UNIFIED TOP NAVBAR (ABSOLUTE POSITIONED) --- */}
+      <View style={[styles.unifiedHeader, { paddingTop: isDesktop ? 30 : insets.top + 10 }]}>
+        <Text style={styles.logo}>V</Text>
+        
+        {isDesktop && (
+          <>
+            {/* Primary Nav Links */}
+            <View style={styles.primaryNav}>
+              {['HOME', 'MY LIST', 'DOWNLOADS', 'SETTINGS', 'ADMIN'].map((item) => (
+                <Pressable key={item}><Text style={styles.navLink}>{item}</Text></Pressable>
+              ))}
+            </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={moviesRefreshing} onRefresh={handleManualRefresh} tintColor="#e50914" />}>
+            {/* Category Filters */}
+            <View style={styles.categoryNav}>
+              {FILTERS.map((filter) => (
+                <Pressable key={filter} onPress={() => setActiveFilter(filter)}>
+                  <Text style={[styles.filterLink, filter === activeFilter && styles.filterLinkActive]}>
+                    {filter.toUpperCase()}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            {/* Search Bar */}
+            <View style={styles.searchBox}>
+              <Ionicons name="search" size={16} color="#888" style={{ marginRight: 8 }} />
+              <TextInput 
+                style={styles.searchInput} 
+                placeholder="Search" 
+                placeholderTextColor="#666" 
+                value={searchQuery} 
+                onChangeText={setSearchQuery} 
+              />
+            </View>
+
+            {/* User Avatar Placeholder */}
+            <View style={styles.avatar} />
+          </>
+        )}
+      </View>
+
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
         {/* --- CINEMATIC HERO SECTION --- */}
         {heroMovie && (
-          <View style={[styles.heroContainer, { height: isDesktop ? height * 0.75 : height * 0.6 }]}>
+          <View style={[styles.heroContainer, { height: isDesktop ? height * 0.8 : height * 0.6 }]}>
             <Image source={{ uri: heroMovie.poster_url || '' }} style={styles.heroImage} resizeMode="cover" />
             
-            {/* The Magic Fade */}
-            <LinearGradient colors={['transparent', 'rgba(10,10,10,0.6)', '#0a0a0a']} style={styles.heroGradient} />
-
-            {/* Desktop Filters (Positioned over the hero image to look like a Navbar extension) */}
-            {isDesktop && (
-              <View style={styles.desktopNavOverlay}>
-                <FilterNavigation />
-              </View>
-            )}
+            {/* Dark gradient from left for text readability */}
+            <LinearGradient colors={['rgba(10,10,10,0.8)', 'transparent']} start={{x: 0, y: 0}} end={{x: 0.6, y: 0}} style={StyleSheet.absoluteFillObject} />
+            {/* Dark gradient from bottom to blend into the grids */}
+            <LinearGradient colors={['transparent', 'rgba(10,10,10,0.6)', '#0a0a0a']} locations={[0.5, 0.85, 1]} style={StyleSheet.absoluteFillObject} />
 
             <View style={[styles.heroContent, isDesktop && styles.heroContentDesktop]}>
               <Text style={[styles.heroTitle, isDesktop && styles.heroTitleDesktop]} numberOfLines={2}>{heroMovie.title}</Text>
               
               {isDesktop && heroMovie.description && (
-                <Text style={styles.heroDescription} numberOfLines={3}>{heroMovie.description}</Text>
+                <Text style={styles.heroDescription} numberOfLines={2}>{heroMovie.description}</Text>
               )}
 
               <View style={styles.heroButtonsRow}>
                 <Pressable style={styles.heroPlayButton} onPress={() => router.push(`/movie/${heroMovie.id}`)}>
-                  <Ionicons name="play" size={24} color="#000" style={{marginLeft: 4}} />
-                  <Text style={styles.heroPlayButtonText}>Play</Text>
+                  <Ionicons name="play" size={20} color="#000" />
+                  <Text style={styles.heroPlayButtonText}>PLAY</Text>
                 </Pressable>
                 
                 <Pressable style={styles.heroWatchlistButton} onPress={() => router.push(`/movie/${heroMovie.id}`)}>
-                  <Ionicons name="add" size={24} color="#fff" />
-                  <Text style={styles.heroWatchlistButtonText}>More Info</Text>
+                  <Ionicons name="add" size={20} color="#fff" />
+                  <Text style={styles.heroWatchlistButtonText}>ADD TO WATCHLIST</Text>
                 </Pressable>
               </View>
             </View>
@@ -194,37 +181,26 @@ export default function HomeScreen() {
         )}
 
         {/* --- MAIN CONTENT GRIDS --- */}
-        {/* We pull the grids UP into the gradient fade using a negative margin */}
-        <View style={[styles.webContentWrapper, { marginTop: heroMovie ? (isDesktop ? -120 : -40) : 20, zIndex: 10 }]}>
+        <View style={[styles.gridContainer, { marginTop: heroMovie ? (isDesktop ? -150 : -40) : 100 }]}>
 
-          {/* Mobile Filters */}
-          {!isDesktop && (
-            <View style={styles.mobileFiltersWrapper}>
-              <FilterNavigation />
-            </View>
-          )}
-
-          <View style={styles.searchContainer}>
-            <Ionicons name="search" size={20} color="#888" style={styles.searchIcon} />
-            <TextInput style={styles.searchBar} placeholder="Search movies..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} />
-          </View>
-
-          {/* CONTINUE WATCHING */}
+          {/* CONTINUE WATCHING (Horizontal Cards) */}
           {continueWatching.length > 0 && !searchQuery.trim() && (
-            <View style={styles.categorySection}>
-              <Text style={styles.sectionLabel}>Continue Watching</Text>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Continue Watching</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
                 {continueWatching.map((item) => {
                   const movie = item.movies;
                   return (
-                    <Pressable key={`cw-${movie.id}`} style={styles.movieCard} onPress={() => router.push(`/movie/${movie.id}`)}>
-                      <Image source={{ uri: movie.poster_url || '' }} style={styles.moviePoster} resizeMode="cover" />
-                      <View style={styles.continueWatchingOverlay}>
-                        <Ionicons name="play-circle" size={40} color="rgba(255,255,255,0.8)" />
+                    <Pressable key={`cw-${movie.id}`} style={styles.cwCard} onPress={() => router.push(`/movie/${movie.id}`)}>
+                      <View style={styles.cwImageContainer}>
+                        <Image source={{ uri: movie.poster_url || '' }} style={styles.cwImage} resizeMode="cover" />
+                        <View style={styles.cwPlayOverlay}><Ionicons name="play" size={24} color="#fff" /></View>
                       </View>
-                      <View style={styles.progressBarBackground}>
-                         <View style={styles.progressBarFill} /> 
+                      <View style={styles.cwInfo}>
+                        <Text style={styles.cwTitle} numberOfLines={1}>{movie.title}</Text>
+                        <Text style={styles.cwDesc} numberOfLines={2}>{movie.category} • {movie.type}</Text>
                       </View>
+                      <View style={styles.cwProgressBg}><View style={styles.cwProgressFill} /></View>
                     </Pressable>
                   );
                 })}
@@ -232,24 +208,26 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* TRENDING NOW */}
+          {/* POPULAR LEADERBOARD */}
           {trendingMovies.length > 0 && !searchQuery.trim() && (
-            <View style={styles.categorySection}>
-              <Text style={styles.sectionLabel}>Popular This Week</Text>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Popular Leaderboard</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
-                {trendingMovies.map((movie) => (
+                {trendingMovies.map((movie, index) => (
                   <Pressable key={`trending-${movie.id}`} style={styles.movieCard} onPress={() => router.push(`/movie/${movie.id}`)}>
                     <Image source={{ uri: movie.poster_url || '' }} style={styles.moviePoster} resizeMode="cover" />
+                    <LinearGradient colors={['transparent', 'rgba(0,0,0,0.9)']} style={styles.movieGradient} />
+                    <Text style={styles.rankText}>#{index + 1} {movie.title}</Text>
                   </Pressable>
                 ))}
               </ScrollView>
             </View>
           )}
 
-          {/* LATEST UPLOADS */}
-          {latestUploadsMovies.length > 0 && !searchQuery.trim() && (
-            <View style={styles.categorySection}>
-              <Text style={styles.sectionLabel}>Recently Added</Text>
+          {/* NEW RELEASES */}
+          {latestUploadsMovies.length > 0 && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>{searchQuery ? 'Search Results' : 'New Releases'}</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
                 {latestUploadsMovies.map((movie) => (
                   <Pressable key={`latest-${movie.id}`} style={styles.movieCard} onPress={() => router.push(`/movie/${movie.id}`)}>
@@ -260,24 +238,6 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* CATEGORIES */}
-          {sortedCategories.map((category) => {
-            const categoryMovies = moviesByCategory[category];
-            if (!categoryMovies) return null;
-            return (
-              <View key={category} style={styles.categorySection}>
-                <Text style={styles.sectionLabel}>{category}</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.rowScroll}>
-                  {categoryMovies.map((movie) => (
-                    <Pressable key={movie.id} style={styles.movieCard} onPress={() => router.push(`/movie/${movie.id}`)}>
-                      <Image source={{ uri: movie.poster_url || '' }} style={styles.moviePoster} resizeMode="cover" />
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              </View>
-            );
-          })}
-
         </View>
       </ScrollView>
     </View>
@@ -287,54 +247,55 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0a0a0a' },
   loadingContainer: { flex: 1, backgroundColor: '#0a0a0a', alignItems: 'center', justifyContent: 'center' },
-  loadingText: { marginTop: 12, fontSize: 15, color: '#888' },
-  headerFixed: { backgroundColor: 'rgba(10, 10, 10, 0.95)', borderBottomWidth: 1, borderBottomColor: '#1f1f1f', zIndex: 100, paddingBottom: 10 },
-  logo: { fontSize: 32, fontWeight: '900', color: '#e50914' },
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: 60 },
-  webContentWrapper: { width: '100%', maxWidth: 1400, alignSelf: 'center', paddingHorizontal: 20 },
+  gridContainer: { width: '100%', maxWidth: 1600, alignSelf: 'center', paddingHorizontal: 40, zIndex: 10 },
   
+  // UNIFIED HEADER
+  unifiedHeader: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 40, width: '100%', maxWidth: 1600, alignSelf: 'center' },
+  logo: { fontSize: 32, fontWeight: '900', color: '#e50914', marginRight: 30 },
+  primaryNav: { flexDirection: 'row', gap: 20, marginRight: 'auto' },
+  navLink: { color: '#ccc', fontSize: 12, fontWeight: '700', letterSpacing: 0.5 },
+  categoryNav: { flexDirection: 'row', gap: 20, marginRight: 30 },
+  filterLink: { color: '#888', fontSize: 13, fontWeight: '600', letterSpacing: 0.5 },
+  filterLinkActive: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1f1f1f', borderRadius: 4, paddingHorizontal: 10, paddingVertical: 8, width: 200, marginRight: 20 },
+  searchInput: { flex: 1, color: '#fff', fontSize: 13, outlineStyle: 'none' },
+  avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#444' },
+
   // HERO STYLES
   heroContainer: { width: '100%', position: 'relative' },
-  heroImage: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%', opacity: 0.8 },
-  heroGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '60%' },
-  heroContent: { position: 'absolute', bottom: '15%', left: 20, right: 20 },
-  heroContentDesktop: { left: 40, right: '40%', bottom: '20%' }, // Constrain text width on desktop
-  heroTitle: { color: '#fff', fontSize: 36, fontWeight: '900', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 4, marginBottom: 12 },
-  heroTitleDesktop: { fontSize: 60, lineHeight: 65 },
-  heroDescription: { color: '#e5e5e5', fontSize: 16, lineHeight: 24, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3, marginBottom: 25 },
-  heroButtonsRow: { flexDirection: 'row', gap: 15 },
-  heroPlayButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingVertical: 12, paddingHorizontal: 30, borderRadius: 4, gap: 8 },
-  heroPlayButtonText: { color: '#000', fontSize: 18, fontWeight: 'bold' },
-  heroWatchlistButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(109, 109, 110, 0.7)', paddingVertical: 12, paddingHorizontal: 30, borderRadius: 4, gap: 8 },
-  heroWatchlistButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  heroImage: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
+  heroContent: { position: 'absolute', bottom: '15%', left: 20, right: 20, zIndex: 10 },
+  heroContentDesktop: { left: 40, width: '45%', bottom: '25%' },
+  heroTitle: { color: '#fff', fontSize: 32, fontWeight: '900', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 4, marginBottom: 10 },
+  heroTitleDesktop: { fontSize: 48, lineHeight: 52 },
+  heroDescription: { color: '#ccc', fontSize: 14, lineHeight: 20, marginBottom: 20, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  heroButtonsRow: { flexDirection: 'row', gap: 12 },
+  heroPlayButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingVertical: 10, paddingHorizontal: 24, borderRadius: 4, gap: 6 },
+  heroPlayButtonText: { color: '#000', fontSize: 14, fontWeight: '800' },
+  heroWatchlistButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(50, 50, 50, 0.8)', paddingVertical: 10, paddingHorizontal: 24, borderRadius: 4, gap: 6 },
+  heroWatchlistButtonText: { color: '#fff', fontSize: 14, fontWeight: '800' },
 
-  // NAVIGATION / FILTERS
-  desktopNavOverlay: { position: 'absolute', top: Platform.OS === 'web' ? 20 : 50, left: 40, zIndex: 20 },
-  mobileFiltersWrapper: { marginBottom: 20 },
-  filtersScrollContent: { gap: 10, paddingRight: 20 },
-  desktopFiltersScroll: { gap: 25 }, // Spread out more on desktop
-  filterPill: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 999, backgroundColor: '#121212', borderWidth: 1, borderColor: '#2a2a2a' },
-  filterPillActive: { backgroundColor: '#e50914', borderColor: '#e50914' },
-  filterPillText: { color: '#bdbdbd', fontSize: 13, fontWeight: '700' },
-  filterPillTextActive: { color: '#fff' },
-  // Desktop specific filter overrides (Text links instead of pills)
-  desktopFilterPill: { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0 },
-  desktopFilterText: { color: '#e5e5e5', fontSize: 16, fontWeight: '500', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
-  desktopFilterTextActive: { color: '#fff', fontWeight: 'bold' },
+  // SECTION STYLES
+  section: { marginBottom: 30 },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginBottom: 12 },
+  rowScroll: { gap: 15, paddingRight: 40 },
+  
+  // CONTINUE WATCHING CARDS (Horizontal)
+  cwCard: { width: CW_WIDTH, height: CW_HEIGHT, backgroundColor: '#1a1a1a', borderRadius: 6, overflow: 'hidden', flexDirection: 'row', position: 'relative' },
+  cwImageContainer: { width: 100, height: '100%', position: 'relative' },
+  cwImage: { width: '100%', height: '100%', opacity: 0.8 },
+  cwPlayOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.2)' },
+  cwInfo: { flex: 1, padding: 15, justifyContent: 'center' },
+  cwTitle: { color: '#fff', fontSize: 15, fontWeight: 'bold', marginBottom: 4 },
+  cwDesc: { color: '#888', fontSize: 12, lineHeight: 16 },
+  cwProgressBg: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 3, backgroundColor: '#333' },
+  cwProgressFill: { width: '45%', height: '100%', backgroundColor: '#e50914' }, // Static width for aesthetics
 
-  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(26,26,26,0.8)', borderRadius: 8, marginBottom: 30, paddingHorizontal: 14, borderWidth: 1, borderColor: '#2a2a2a', maxWidth: 600 },
-  searchIcon: { marginRight: 10 },
-  searchBar: { flex: 1, paddingVertical: 12, fontSize: 16, color: '#fff', outlineStyle: 'none' },
-  
-  categorySection: { marginBottom: 35 },
-  sectionLabel: { fontSize: 20, fontWeight: 'bold', color: '#e5e5e5', marginBottom: 15 },
-  rowScroll: { gap: 12, paddingRight: 20 },
-  
+  // STANDARD MOVIE POSTERS
   movieCard: { width: POSTER_WIDTH, height: POSTER_HEIGHT, borderRadius: 6, overflow: 'hidden', backgroundColor: '#1a1a1a', position: 'relative' },
   moviePoster: { width: '100%', height: '100%' },
-  
-  continueWatchingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.2)', justifyContent: 'center', alignItems: 'center' },
-  progressBarBackground: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 4, backgroundColor: '#333' },
-  progressBarFill: { width: '60%', height: '100%', backgroundColor: '#e50914' },
+  movieGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '40%' },
+  rankText: { position: 'absolute', bottom: 8, left: 8, color: '#fff', fontSize: 12, fontWeight: 'bold', zIndex: 2 }
 });
