@@ -12,7 +12,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; };
 type Episode = { id: string; season_number: number; episode_number: number; title: string; video_url: string | null; };
 
-// --- 1. SMART WEB PLAYER (Handles HLS and MP4) ---
 function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initialTime: number; onTimeUpdate: (time: number) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -34,9 +33,7 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initial
           const hlsUrl = url.includes('.m3u8') ? url : `${url}.m3u8`;
           hls.loadSource(hlsUrl);
           hls.attachMedia(video);
-          hls.on(Hls.Events.MANIFEST_PARSED, () => { 
-            video.play().catch(() => {}); 
-          });
+          hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(() => {}); });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
           video.src = url;
           video.currentTime = initialTime;
@@ -54,58 +51,30 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initial
     return () => video.removeEventListener('timeupdate', handleTimeUpdate);
   }, [onTimeUpdate]);
 
-  return (
-    <video
-      ref={videoRef}
-      controls
-      autoPlay
-      playsInline
-      style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
-    />
-  );
+  return <video ref={videoRef} controls autoPlay playsInline style={{ width: '100%', height: '100%', backgroundColor: '#000' }} />;
 }
 
-// --- 2. HYBRID PLAYER BLOCK (FOOLPROOF VIEW COUNTER) ---
 function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url: string; onError: (msg: string) => void; initialTime: number; movieId: string; userId: string | null; }) {
   const isWeb = Platform.OS === 'web';
   const player = !isWeb ? useVideoPlayer(url, (p) => { p.play(); }) : null;
 
   const hasCountedView = useRef(false);
 
-  // 1. THE GUARANTEED VIEW COUNTER (Fires exactly at 6 seconds)
   useEffect(() => {
     const viewTimer = setTimeout(() => {
       if (!hasCountedView.current) {
         hasCountedView.current = true;
-        
-        console.log("6 Seconds Reached! Sending View for Movie ID:", movieId); // Debug log
-        
-        // Pass the ID as both a number and string just in case to avoid database rejection
         const safeId = isNaN(Number(movieId)) ? movieId : Number(movieId);
-
-        supabase.rpc('increment_view_count', { row_id: safeId }).then(({ error }) => {
-          if (error) {
-             console.error("View Count Failed:", error.message);
-          } else {
-             console.log("View Counted Successfully!");
-          }
-        });
+        supabase.rpc('increment_view_count', { row_id: safeId }).then();
       }
     }, 6000);
-
     return () => clearTimeout(viewTimer);
   }, [movieId]);
 
-  // 2. SAVE RESUME PROGRESS (Runs every 10 seconds for logged-in users)
   useEffect(() => {
     if (!userId || !movieId) return;
-    
     const progressTimer = setInterval(() => {
-      // Get time differently based on web vs mobile
-      const currentTime = isWeb && document.querySelector('video') 
-        ? document.querySelector('video')?.currentTime || 0
-        : player?.currentTime || 0;
-
+      const currentTime = isWeb && document.querySelector('video') ? document.querySelector('video')?.currentTime || 0 : player?.currentTime || 0;
       if (currentTime > 5) {
         supabase.from('playback_progress').upsert(
           { user_id: userId, movie_id: movieId, timestamp_seconds: Math.floor(currentTime), updated_at: new Date().toISOString() }, 
@@ -113,7 +82,6 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
         ).then();
       }
     }, 10000);
-
     return () => clearInterval(progressTimer);
   }, [userId, movieId, isWeb, player]);
 
@@ -122,20 +90,14 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
       {isWeb ? (
         <WebHLSPlayer url={url} initialTime={initialTime} onTimeUpdate={() => {}} />
       ) : (
-        <VideoView 
-          style={{ flex: 1 }} 
-          player={player!} 
-          nativeControls={true} 
-          fullscreenOptions={{ enable: true }} 
-        />
+        <VideoView style={{ flex: 1 }} player={player!} nativeControls={true} fullscreenOptions={{ enable: true }} />
       )}
     </View>
   );
 }
 
-// --- 3. THEATER SCREEN ---
 export default function TheaterScreen() {
-  const params = useLocalSearchParams<{ id: string; localUri?: string; title?: string; poster_url?: string; }>();
+  const params = useLocalSearchParams<{ id: string; localUri?: string; }>();
   const { id, localUri: paramLocalUri } = params;
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -154,7 +116,6 @@ export default function TheaterScreen() {
 
   const isOfflineMode = Boolean(paramLocalUri);
 
-  // FETCH MOVIE, EPISODES, AND SIMILAR TITLES
   useEffect(() => {
     async function fetchData() {
       try {
@@ -169,24 +130,18 @@ export default function TheaterScreen() {
         if (error) throw error;
         setMovie(movieData);
 
-        // Fetch Episodes if Series
         if (movieData.type === 'TV Series') {
           const { data: epData } = await supabase.from('episodes').select('*').eq('movie_id', id).eq('status', 'active').order('season_number').order('episode_number');
           setEpisodes(epData || []);
         }
 
-        // Fetch Similar
         const { data: simData } = await supabase.from('movies').select('*').eq('category', movieData.category).neq('id', id).limit(6);
         setSimilarMovies(simData || []);
 
         const downloaded = await isMovieDownloaded(id);
         setIsDownloaded(downloaded);
 
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
+      } catch (err) { console.error(err); } finally { setLoading(false); }
     }
     fetchData();
   }, [id]);
@@ -194,13 +149,8 @@ export default function TheaterScreen() {
   const toggleWatchlist = async () => {
     if (!userId || !movie) return;
     try {
-      if (isInMyList) {
-        await supabase.from('watchlist').delete().eq('user_id', userId).eq('movie_id', movie.id);
-        setIsInMyList(false);
-      } else {
-        await supabase.from('watchlist').insert({ user_id: userId, movie_id: movie.id });
-        setIsInMyList(true);
-      }
+      if (isInMyList) { await supabase.from('watchlist').delete().eq('user_id', userId).eq('movie_id', movie.id); setIsInMyList(false); } 
+      else { await supabase.from('watchlist').insert({ user_id: userId, movie_id: movie.id }); setIsInMyList(true); }
     } catch (e) { console.error(e); }
   };
 
@@ -235,49 +185,43 @@ export default function TheaterScreen() {
 
   return (
     <View style={styles.container}>
-      {/* HEADER */}
-      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+      {/* 5. BACK BUTTON SAFELY POSITIONED */}
+      <View style={[styles.header, { top: Platform.OS === 'web' ? 20 : insets.top + 50 }]}>
         <Pressable onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={28} color="#fff" />
+          <Ionicons name="arrow-back" size={24} color="#fff" />
         </Pressable>
       </View>
 
       <ScrollView style={styles.scroll}>
-        {/* MEDIA SECTION */}
         {isPlaying && currentVideoUrl ? (
           <VideoPlayerBlock url={currentVideoUrl} movieId={movie.id} userId={userId} initialTime={0} onError={()=>{}} />
         ) : (
           <View style={styles.posterBox}>
             <Image source={{ uri: movie.poster_url }} style={styles.mainPoster} />
-            <Pressable style={styles.playOverlay} onPress={() => {
-              setCurrentVideoUrl(movie.type === 'TV Series' ? episodes[0]?.video_url : movie.video_url);
-              setIsPlaying(true);
-            }}>
+            <Pressable style={styles.playOverlay} onPress={() => { setCurrentVideoUrl(movie.type === 'TV Series' ? episodes[0]?.video_url : movie.video_url); setIsPlaying(true); }}>
               <Ionicons name="play" size={60} color="#fff" />
             </Pressable>
           </View>
         )}
 
-        {/* INFO SECTION */}
         <View style={styles.details}>
           <Text style={styles.title}>{movie.title}</Text>
           <Text style={styles.meta}>{movie.category} • {movie.type}</Text>
 
-          {/* BUTTON ROW */}
           <View style={styles.buttonRow}>
             <Pressable style={styles.playBtn} onPress={() => setIsPlaying(true)}>
-              <Ionicons name="play" size={22} color="#000" />
+              <Ionicons name="play" size={20} color="#000" />
               <Text style={styles.playBtnText}>Play</Text>
             </Pressable>
 
             <Pressable style={styles.actionBtn} onPress={toggleWatchlist}>
-              <Ionicons name={isInMyList ? "checkmark" : "add"} size={26} color="#fff" />
+              <Ionicons name={isInMyList ? "checkmark" : "add"} size={24} color="#fff" />
               <Text style={styles.actionBtnText}>My List</Text>
             </Pressable>
 
             {!isDownloaded && !isOfflineMode && Platform.OS !== 'web' && (
               <Pressable style={styles.actionBtn} onPress={handleDownload} disabled={isDownloading}>
-                <Ionicons name="download-outline" size={24} color={isDownloading ? "#555" : "#fff"} />
+                <Ionicons name="download-outline" size={22} color={isDownloading ? "#555" : "#fff"} />
                 <Text style={styles.actionBtnText}>{isDownloading ? `${downloadProgress}%` : 'Download'}</Text>
               </Pressable>
             )}
@@ -285,15 +229,11 @@ export default function TheaterScreen() {
 
           <Text style={styles.description}>{movie.description}</Text>
 
-          {/* EPISODES LIST */}
           {movie.type === 'TV Series' && episodes.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Episodes</Text>
               {episodes.map(ep => (
-                <Pressable key={ep.id} style={styles.epRow} onPress={() => {
-                  setCurrentVideoUrl(ep.video_url);
-                  setIsPlaying(true);
-                }}>
+                <Pressable key={ep.id} style={styles.epRow} onPress={() => { setCurrentVideoUrl(ep.video_url); setIsPlaying(true); }}>
                   <View style={styles.epInfo}>
                     <Text style={styles.epMeta}>S{ep.season_number} E{ep.episode_number}</Text>
                     <Text style={styles.epTitle}>{ep.title}</Text>
@@ -304,7 +244,6 @@ export default function TheaterScreen() {
             </View>
           )}
 
-          {/* SIMILAR TITLES */}
           {similarMovies.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>More Like This</Text>
@@ -325,7 +264,7 @@ export default function TheaterScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  header: { position: 'absolute', left: 15, zIndex: 10 },
+  header: { position: 'absolute', left: 15, zIndex: 100 },
   backButton: { backgroundColor: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 20 },
   scroll: { flex: 1 },
   videoContainer: { width: '100%', aspectRatio: 16/9, backgroundColor: '#000' },
@@ -333,20 +272,20 @@ const styles = StyleSheet.create({
   mainPoster: { width: '100%', height: '100%', opacity: 0.6 },
   playOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
   details: { padding: 20 },
-  title: { color: '#fff', fontSize: 28, fontWeight: 'bold' },
+  title: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
   meta: { color: '#888', marginVertical: 8, fontWeight: '600' },
   buttonRow: { flexDirection: 'row', gap: 15, marginVertical: 15, alignItems: 'center' },
-  playBtn: { flex: 1, backgroundColor: '#fff', height: 45, borderRadius: 4, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 },
-  playBtnText: { color: '#000', fontWeight: 'bold', fontSize: 16 },
+  playBtn: { flex: 1, backgroundColor: '#fff', height: 40, borderRadius: 4, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 },
+  playBtnText: { color: '#000', fontWeight: 'bold', fontSize: 14 },
   actionBtn: { alignItems: 'center', minWidth: 60 },
   actionBtnText: { color: '#888', fontSize: 11, marginTop: 4 },
-  description: { color: '#ccc', fontSize: 15, lineHeight: 22, marginTop: 10 },
+  description: { color: '#ccc', fontSize: 14, lineHeight: 22, marginTop: 10 },
   section: { marginTop: 30 },
-  sectionTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 15 },
+  sectionTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 15 },
   epRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', padding: 15, borderRadius: 8, marginBottom: 10 },
   epInfo: { flex: 1 },
   epMeta: { color: '#e50914', fontWeight: 'bold', fontSize: 12 },
-  epTitle: { color: '#fff', fontSize: 15, marginTop: 2 },
+  epTitle: { color: '#fff', fontSize: 14, marginTop: 2 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   gridItem: { width: (Dimensions.get('window').width - 50) / 3, aspectRatio: 2/3 },
   gridImage: { width: '100%', height: '100%', borderRadius: 4, backgroundColor: '#111' }
