@@ -72,7 +72,6 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
     return () => clearInterval(progressTimer);
   }, [userId, movieId, isWeb, player]);
 
-  // 3. CONSTRAINED VIDEO PLAYER SIZING
   return (
     <View style={styles.videoContainer}>
       {isWeb ? (
@@ -169,7 +168,9 @@ export default function TheaterScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={[styles.header, { top: Platform.OS === 'web' ? 20 : insets.top + 50 }]}>
+      
+      {/* ---> FIXED: BACK BUTTON IS NOW SAFELY IN THE TOP LEFT CORNER OUTSIDE THE VIDEO <--- */}
+      <View style={[styles.header, { top: Platform.OS === 'web' ? 20 : insets.top + 10 }]}>
         <Pressable onPress={() => router.back()} style={styles.backButton}><Ionicons name="arrow-back" size={24} color="#fff" /></Pressable>
       </View>
 
@@ -189,7 +190,6 @@ export default function TheaterScreen() {
           <Text style={styles.title}>{movie.title}</Text>
           <Text style={styles.meta}>{movie.category} • {movie.type}</Text>
 
-          {/* 4. BUTTON IS NO LONGER STRETCHING ACROSS THE SCREEN */}
           <View style={styles.buttonRow}>
             <Pressable style={styles.playBtn} onPress={() => setIsPlaying(true)}>
               <Ionicons name="play" size={20} color="#000" />
@@ -231,7 +231,6 @@ export default function TheaterScreen() {
               <Text style={styles.sectionTitle}>More Like This</Text>
               <View style={styles.grid}>
                 {similarMovies.map(m => (
-                  // 4. POSTERS NO LONGER MASSIVE ON DESKTOP
                   <Pressable key={m.id} style={[styles.gridItem, { width: isDesktop ? 140 : (width - 50) / 3 }]} onPress={() => router.replace(`/movie/${m.id}`)}>
                     <Image source={{ uri: m.poster_url }} style={styles.gridImage} />
                   </Pressable>
@@ -247,14 +246,20 @@ export default function TheaterScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  header: { position: 'absolute', left: 15, zIndex: 100 },
-  backButton: { backgroundColor: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 20 },
+  
+  // ---> FIXED: HEADER MOVED OUTSIDE OF VIDEO FLOW <---
+  header: { position: 'absolute', left: 20, zIndex: 100 },
+  backButton: { backgroundColor: 'rgba(0,0,0,0.6)', padding: 10, borderRadius: 24 },
+  
   scroll: { flex: 1 },
-  videoContainer: { width: '100%', maxWidth: 1200, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#000', marginTop: Platform.OS === 'web' ? 20 : 0 },
-  posterBox: { width: '100%', maxWidth: 1200, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#111', marginTop: Platform.OS === 'web' ? 20 : 0 },
+  
+  // ---> FIXED: PLAYER NOW CAPPED AT 960px WIDTH FOR OPTIMAL DESKTOP VIEWING <---
+  videoContainer: { width: '100%', maxWidth: 960, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#000', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
+  posterBox: { width: '100%', maxWidth: 960, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#111', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
+  
   mainPoster: { width: '100%', height: '100%', opacity: 0.6 },
   playOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
-  details: { padding: 20, maxWidth: 1200, alignSelf: 'center', width: '100%' },
+  details: { padding: 20, maxWidth: 960, alignSelf: 'center', width: '100%' },
   title: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
   meta: { color: '#888', marginVertical: 8, fontWeight: '600' },
   buttonRow: { flexDirection: 'row', gap: 20, marginVertical: 15, alignItems: 'center' },
