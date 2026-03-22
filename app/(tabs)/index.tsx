@@ -12,7 +12,8 @@ const POSTER_HEIGHT = 180;
 const CW_WIDTH = 280;
 const CW_HEIGHT = 90;
 
-type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; views?: number; };
+// ADDED backdrop_url to the Type definition
+type Movie = { id: string; title: string; description: string | null; poster_url: string | null; backdrop_url?: string | null; video_url: string | null; category: string | null; type: string | null; views?: number; };
 const FILTERS = ['All', 'Movies', 'TV Shows', 'Action', 'Comedy', 'Adventure', 'Sci-Fi'] as const;
 type Filter = (typeof FILTERS)[number];
 
@@ -106,22 +107,33 @@ export default function HomeScreen() {
   };
 
   const filteredMovies = useMemo(() => filterByQuery(movies, searchQuery), [movies, searchQuery]);
-  const heroMovie = !searchQuery.trim() && filteredMovies.length > 0 ? filteredMovies[0] : null;
-  const remainingMovies = heroMovie ? filteredMovies.slice(1) : filteredMovies;
   
-  // Trending & Latest Uploads
+  // HERO ASSIGNMENT
+  const heroMovie = !searchQuery.trim() && filteredMovies.length > 0 ? filteredMovies[0] : null;
+  
+  // 5. BULLETPROOF DUPLICATE FIX: Strictly remove the Hero ID from all lists below it
+  const remainingMovies = heroMovie 
+    ? filteredMovies.filter(m => m.id !== heroMovie.id) 
+    : filteredMovies;
+  
   const trendingMovies = useMemo(() => {
     return [...remainingMovies].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 10);
   }, [remainingMovies]);
+  
   const latestUploadsMovies = remainingMovies.slice(0, 12);
 
-  const categoryOrder = ['Action', 'Adventure', 'Comedy', 'Drama'];
+  const categoryOrder = ['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi'];
+  
   const moviesByCategory = useMemo(() => {
     const grouped: Record<string, Movie[]> = {};
     for (const movie of remainingMovies) {
-      const category = movie.category ?? 'Other';
-      if (!grouped[category]) grouped[category] = [];
-      grouped[category].push(movie);
+      // 5. CATEGORY FIX: Auto-trim spaces and fix case sensitivity issues from database
+      let cat = movie.category?.trim() || 'Other';
+      const knownCat = FILTERS.find(f => f.toLowerCase() === cat.toLowerCase());
+      if (knownCat) cat = knownCat;
+
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(movie);
     }
     return grouped;
   }, [remainingMovies]);
@@ -151,8 +163,8 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       
-      {/* SPACED OUT NAVBAR: Left group and Right group */}
-      <View style={[styles.unifiedHeader, { paddingTop: isDesktop ? 20 : insets.top + 10 }]}>
+      {/* 2. NAVBAR PUSHED HIGHER UP (PaddingTop reduced to 10) */}
+      <View style={[styles.unifiedHeader, { paddingTop: isDesktop ? 10 : insets.top + 10 }]}>
         
         <View style={styles.headerLeft}>
           <Text style={styles.logo}>V</Text>
@@ -188,9 +200,11 @@ export default function HomeScreen() {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={moviesRefreshing} onRefresh={handleManualRefresh} tintColor="#e50914" />}>
         
         {heroMovie && (
-          <View style={[styles.heroContainer, { height: isDesktop ? Math.min(height * 0.70, 700) : height * 0.5 }]}>
-            {/* Note: Tell admin to upload 1920x1080 Horizontal images for the hero! */}
-            <Image source={{ uri: heroMovie.poster_url || '' }} style={styles.heroImage} resizeMode="cover" />
+          // 1. FORCED 16:9 ASPECT RATIO: Zero cropping on Desktop.
+          <View style={[styles.heroContainer, isDesktop ? { aspectRatio: 16/9, maxHeight: height * 0.85 } : { height: height * 0.5 }]}>
+            
+            {/* 3. PRIORITIZE BACKDROP_URL over POSTER_URL */}
+            <Image source={{ uri: heroMovie.backdrop_url || heroMovie.poster_url || '' }} style={styles.heroImage} resizeMode="cover" />
             
             <LinearGradient colors={['rgba(10,10,10,0.9)', 'transparent']} start={{x: 0, y: 0}} end={{x: 0.6, y: 0}} style={StyleSheet.absoluteFillObject} />
             <LinearGradient colors={['transparent', 'rgba(10,10,10,0.8)', '#0a0a0a']} locations={[0.5, 0.85, 1]} style={StyleSheet.absoluteFillObject} />
@@ -214,7 +228,8 @@ export default function HomeScreen() {
           </View>
         )}
 
-        <View style={[styles.gridContainer, { marginTop: heroMovie ? (isDesktop ? -80 : -20) : 80 }]}>
+        {/* 4. SEPARATED GRID FROM HERO (Reduced negative margin) */}
+        <View style={[styles.gridContainer, { marginTop: heroMovie ? (isDesktop ? -30 : -20) : 80 }]}>
 
           {!isDesktop && (
             <View style={{ marginBottom: 20 }}>
@@ -241,6 +256,7 @@ export default function HomeScreen() {
                   return (
                     <Pressable key={`cw-${movie.id}`} style={styles.cwCard} onPress={() => router.push(`/movie/${movie.id}`)}>
                       <View style={styles.cwImageContainer}>
+                        {/* Always use poster for cards to keep it uniform */}
                         <Image source={{ uri: movie.poster_url || '' }} style={styles.cwImage} resizeMode="cover" />
                         <View style={styles.cwPlayOverlay}><Ionicons name="play" size={20} color="#fff" /></View>
                       </View>
@@ -256,7 +272,6 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* RESTORED: Trending & Latest */}
           {trendingMovies.length > 0 && !searchQuery.trim() && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Trending</Text>
@@ -337,7 +352,8 @@ const styles = StyleSheet.create({
   heroContainer: { width: '100%', position: 'relative' },
   heroImage: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%', opacity: 0.9 },
   heroContent: { position: 'absolute', bottom: '15%', left: 20, right: 20, zIndex: 10 },
-  heroContentDesktop: { left: 40, width: '45%', bottom: '20%' },
+  // 4. PUSHED HERO TEXT HIGHER UP TO AVOID OVERLAP
+  heroContentDesktop: { left: 40, width: '45%', bottom: '30%' },
   heroTitle: { color: '#fff', fontSize: 24, fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 4, marginBottom: 8 },
   heroTitleDesktop: { fontSize: 34, lineHeight: 40 },
   heroDescription: { color: '#e5e5e5', fontSize: 14, lineHeight: 20, marginBottom: 16, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
