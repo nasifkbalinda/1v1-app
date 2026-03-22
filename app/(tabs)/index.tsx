@@ -107,17 +107,26 @@ export default function HomeScreen() {
 
   const filteredMovies = useMemo(() => filterByQuery(movies, searchQuery), [movies, searchQuery]);
   const heroMovie = !searchQuery.trim() && filteredMovies.length > 0 ? filteredMovies[0] : null;
-  const remainingMovies = heroMovie ? filteredMovies.filter(m => m.id !== heroMovie.id) : filteredMovies;
   
-  const trendingMovies = useMemo(() => {
-    return [...remainingMovies].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 10);
-  }, [remainingMovies]);
-  const latestUploadsMovies = remainingMovies.slice(0, 12);
+  // ---> THE FIX: Smarter List Distribution <---
 
+  // 1. Trending: Includes all movies (including the Hero if it's trending)
+  const trendingMovies = useMemo(() => {
+    return [...filteredMovies].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 10);
+  }, [filteredMovies]);
+
+  // 2. Latest Uploads: Explicitly HIDES the Hero movie to avoid immediate duplication
+  const latestUploadsMovies = useMemo(() => {
+    return heroMovie 
+      ? filteredMovies.filter(m => m.id !== heroMovie.id).slice(0, 12)
+      : filteredMovies.slice(0, 12);
+  }, [filteredMovies, heroMovie]);
+
+  // 3. Categories: Includes all movies (so the Hero will properly show up in 'Adventure', etc.)
   const categoryOrder = ['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi'];
   const moviesByCategory = useMemo(() => {
     const grouped: Record<string, Movie[]> = {};
-    for (const movie of remainingMovies) {
+    for (const movie of filteredMovies) {
       let cat = movie.category?.trim() || 'Other';
       const knownCat = FILTERS.find(f => f.toLowerCase() === cat.toLowerCase());
       if (knownCat) cat = knownCat;
@@ -125,18 +134,7 @@ export default function HomeScreen() {
       grouped[cat].push(movie);
     }
     return grouped;
-  }, [remainingMovies]);
-
-  const sortedCategories = useMemo(() => {
-    return Object.keys(moviesByCategory).sort((a, b) => {
-      const ia = categoryOrder.indexOf(a);
-      const ib = categoryOrder.indexOf(b);
-      if (ia === -1 && ib === -1) return a.localeCompare(b);
-      if (ia === -1) return 1;
-      if (ib === -1) return -1;
-      return ia - ib;
-    });
-  }, [moviesByCategory, categoryOrder]);
+  }, [filteredMovies]);
 
   const NavLink = ({ title, path }: { title: string, path: string }) => {
     const isActive = pathname === path || (path === '/' && pathname === '/index');
@@ -332,8 +330,6 @@ const styles = StyleSheet.create({
   heroContainer: { width: '100%', position: 'relative' },
   heroImage: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%', opacity: 0.9 },
   heroContent: { position: 'absolute', bottom: '15%', left: 20, right: 20, zIndex: 10 },
-  
-  // ---> FIXED: MOVED TEXT AND BUTTONS MUCH FURTHER DOWN TO CLOSE THE GAP <---
   heroContentDesktop: { left: 40, width: '45%', bottom: '12%' },
   
   heroTitle: { color: '#fff', fontSize: 24, fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 4, marginBottom: 8 },
