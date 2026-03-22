@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 type UploadTask = { 
@@ -48,6 +48,9 @@ export default function AdminScreen() {
 
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
   const [tvSeriesUploading, setTvSeriesUploading] = useState(false);
+  
+  // ---> NEW: Holds our active upload connections so we can cancel them <---
+  const xhrRefs = useRef<{ [key: string]: XMLHttpRequest }>({});
 
   const [manageMovies, setManageMovies] = useState<any[]>([]);
   const [trashedEpisodes, setTrashedEpisodes] = useState<any[]>([]); 
@@ -164,17 +167,12 @@ export default function AdminScreen() {
 
   const handleToggleRole = async (targetId: string, currentRole: string) => {
     if (userRole !== 'super_admin') return;
-    
     const safeCurrentRole = currentRole || 'user';
     const newRole = safeCurrentRole === 'manager' ? 'user' : 'manager';
-    
     const msg = `Change this user to ${newRole.toUpperCase()}?`;
-    
     if (Platform.OS === 'web' ? window.confirm(msg) : true) {
       setUpdatingId(targetId);
-      
       const { error } = await supabase.from('profiles').update({ role: newRole }).eq('id', targetId);
-      
       if (error) {
         if (Platform.OS === 'web') window.alert("Failed to update: " + error.message);
         else Alert.alert("Error", "Failed to update: " + error.message);
@@ -182,7 +180,6 @@ export default function AdminScreen() {
         if (Platform.OS === 'web') window.alert("Success! User role updated.");
         else Alert.alert("Success", "User role updated.");
       }
-      
       fetchTeamMembers();
       setUpdatingId(null);
     }
@@ -193,6 +190,17 @@ export default function AdminScreen() {
 
   const updateTask = (id: string, updates: Partial<UploadTask>) => { setUploadTasks(prev => prev.map(task => task.id === id ? { ...task, ...updates } : task)); };
   const removeTask = (id: string) => { setUploadTasks(prev => prev.filter(task => task.id !== id)); };
+
+  // ---> NEW: Cancel function <---
+  const handleCancelTask = (taskId: string) => {
+    // If the XHR is currently active, abort it
+    if (xhrRefs.current[taskId]) {
+      xhrRefs.current[taskId].abort();
+    } else {
+      // If it hasn't reached the XHR phase yet, just mark it as errored
+      updateTask(taskId, { status: 'error', message: 'Upload Cancelled by User' });
+    }
+  };
 
   const pickPoster = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
@@ -239,18 +247,15 @@ export default function AdminScreen() {
     return supabase.storage.from('movies').getPublicUrl(data.path).data.publicUrl;
   };
 
-  // ---> UPDATED: Uses relative URL and better error tracking <---
   const uploadVideoToMux = async (fileObj: any, taskId: string, subtitleUrl?: string | null, passthrough?: string): Promise<void> => {
     let blob = fileObj.file;
     if (!blob) { const response = await fetch(fileObj.uri); blob = await response.blob(); }
     
     updateTask(taskId, { message: 'Connecting to secure backend...' });
 
-    // 1. Get the secure Supabase Token
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) throw new Error('Authentication token missing. Please log in again.');
 
-    // 2. Call your Cloudflare API using a RELATIVE URL so it stays on the correct branch
     const backendRes = await fetch('/api/mux', { 
         method: 'POST', 
         headers: { 
@@ -260,7 +265,6 @@ export default function AdminScreen() {
         body: JSON.stringify({ subtitleUrl, passthrough }) 
     });
 
-    // 3. Much better error tracking
     if (!backendRes.ok) {
       let errorMsg = `Backend Error (${backendRes.status})`;
       try {
@@ -275,10 +279,35 @@ export default function AdminScreen() {
     
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
+      // ---> NEW: Store the connection in our ref so we can abort it later <---
+      xhrRefs.current[taskId] = xhr;
+      
       xhr.open('PUT', muxUpload.data.url);
-      xhr.upload.onprogress = (event) => { if (event.lengthComputable) { updateTask(taskId, { progress: Math.round((event.loaded / event.total) * 100), message: `Uploading Video: ${Math.round((event.loaded / event.total) * 100)}%` }); } };
-      xhr.onload = () => { if (xhr.status >= 200 && xhr.status < 300) { updateTask(taskId, { status: 'done', progress: 100, message: 'Upload Complete!' }); resolve(); } else { reject(new Error(`Failed (${xhr.status})`)); } };
-      xhr.onerror = () => reject(new Error(`Network error`));
+      xhr.upload.onprogress = (event) => { 
+        if (event.lengthComputable) { 
+          updateTask(taskId, { progress: Math.round((event.loaded / event.total) * 100), message: `Uploading Video: ${Math.round((event.loaded / event.total) * 100)}%` }); 
+        } 
+      };
+      xhr.onload = () => { 
+        delete xhrRefs.current[taskId]; // clean up memory
+        if (xhr.status >= 200 && xhr.status < 300) { 
+          updateTask(taskId, { status: 'done', progress: 100, message: 'Upload Complete!' }); 
+          resolve(); 
+        } else { 
+          reject(new Error(`Failed (${xhr.status})`)); 
+        } 
+      };
+      xhr.onerror = () => { 
+        delete xhrRefs.current[taskId];
+        reject(new Error(`Network error`)); 
+      };
+      
+      // ---> NEW: Handle the abort event gracefully <---
+      xhr.onabort = () => {
+        delete xhrRefs.current[taskId];
+        reject(new Error(`Upload Cancelled by User`));
+      };
+
       xhr.send(blob);
     });
   };
@@ -353,7 +382,14 @@ export default function AdminScreen() {
   };
 
   const fetchTvSeries = useCallback(async () => { setLoadingSeries(true); const { data } = await supabase.from('movies').select('id, title').eq('type', 'TV Series').eq('status', 'active').order('title'); setTvSeries(data ?? []); setLoadingSeries(false); }, []);
-  const fetchAllMovies = useCallback(async () => { setManageLoading(true); const { data: mData } = await supabase.from('movies').select('*').order('title'); setManageMovies(mData ?? []); const { data: eData } = await supabase.from('episodes').select('*, movies(title)').eq('status', 'trash').order('season_number'); setTrashedEpisodes(eData ?? []); setManageLoading(false); }, []);
+  const fetchAllMovies = useCallback(async () => { 
+    setManageLoading(true); 
+    const { data: mData } = await supabase.from('movies').select('*, profiles(email)').order('title'); 
+    setManageMovies(mData ?? []); 
+    const { data: eData } = await supabase.from('episodes').select('*, movies(title), profiles(email)').eq('status', 'trash').order('season_number'); 
+    setTrashedEpisodes(eData ?? []); 
+    setManageLoading(false); 
+  }, []);
 
   useEffect(() => { if (uploadMode === 'episode') fetchTvSeries(); }, [uploadMode, fetchTvSeries]);
   useEffect(() => { if (activeSection === 'manage' || activeSection === 'trash') fetchAllMovies(); }, [activeSection, fetchAllMovies]);
@@ -553,6 +589,13 @@ export default function AdminScreen() {
                     <View style={styles.taskHeader}>
                       <Text style={styles.taskTitle}>{task.title}</Text>
                       <View style={{flexDirection: 'row', gap: 15, alignItems: 'center'}}>
+                        {/* ---> NEW: Show the Cancel button while uploading <--- */}
+                        {task.status === 'uploading' && (
+                           <Pressable onPress={() => handleCancelTask(task.id)} style={{flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#333', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6}}>
+                             <Ionicons name="close-circle" size={16} color="#ef4444" />
+                             <Text style={{color: '#ef4444', fontSize: 12, fontWeight: 'bold'}}>Cancel</Text>
+                           </Pressable>
+                        )}
                         {task.status === 'error' && <Pressable onPress={() => handleRetryTask(task)} style={{flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#333', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6}}><Ionicons name="refresh" size={16} color="#3b82f6" /><Text style={{color: '#3b82f6', fontSize: 12, fontWeight: 'bold'}}>Retry</Text></Pressable>}
                         {(task.status === 'done' || task.status === 'error') && <Pressable onPress={() => removeTask(task.id)}><Ionicons name="close" size={20} color="#888" /></Pressable>}
                       </View>
@@ -637,7 +680,10 @@ export default function AdminScreen() {
                       <Pressable style={styles.checkboxZone} onPress={() => toggleManageSelection(m.id)}>
                         <Ionicons name={selectedManageIds.includes(m.id) ? "checkbox" : "square-outline"} size={22} color={selectedManageIds.includes(m.id) ? "#e50914" : "#666"} />
                       </Pressable>
-                      <View style={styles.manageInfo}><Text style={styles.manageTitle}>{m.title}</Text><Text style={styles.manageMeta}>{m.type}</Text></View>
+                      <View style={styles.manageInfo}>
+                        <Text style={styles.manageTitle}>{m.title}</Text>
+                        <Text style={styles.manageMeta}>{m.type} • Uploaded by: {m.profiles?.email || 'Super Admin'}</Text>
+                      </View>
                       <View style={styles.manageActions}>
                         <Pressable style={[styles.manageButton, styles.manageButtonSecondary]} onPress={() => startEditing(m)}><Text style={styles.manageButtonText}>Edit</Text></Pressable>
                         <Pressable style={[styles.manageButton, styles.manageButtonTrash]} onPress={() => handleTrashMovie(m.id)}>{updatingId === m.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Trash</Text>}</Pressable>
@@ -669,7 +715,10 @@ export default function AdminScreen() {
                 {trashedMovies.map(m => (
                   <View key={`movie-${m.id}`} style={styles.manageItem}>
                     <Pressable style={styles.checkboxZone} onPress={() => toggleTrashSelection(m.id)}><Ionicons name={selectedTrashIds.includes(m.id) ? "checkbox" : "square-outline"} size={22} color={selectedTrashIds.includes(m.id) ? "#e50914" : "#666"} /></Pressable>
-                    <View style={styles.manageInfo}><Text style={styles.manageTitle}>{m.title}</Text><Text style={styles.manageMeta}>{m.type}</Text></View>
+                    <View style={styles.manageInfo}>
+                      <Text style={styles.manageTitle}>{m.title}</Text>
+                      <Text style={styles.manageMeta}>{m.type} • Uploaded by: {m.profiles?.email || 'Super Admin'}</Text>
+                    </View>
                     <View style={styles.manageActions}>
                       <Pressable style={[styles.manageButton, styles.manageButtonRestore]} onPress={() => handleRestoreMovie(m.id)}>{updatingId === m.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Restore</Text>}</Pressable>
                       <Pressable style={[styles.manageButton, styles.manageButtonTrash]} onPress={() => handleDeleteForeverMovie(m.id)}>{deletingId === m.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Delete</Text>}</Pressable>
@@ -679,7 +728,10 @@ export default function AdminScreen() {
                 {trashedEpisodes.map(ep => (
                   <View key={`ep-${ep.id}`} style={[styles.manageItem, { borderColor: '#444' }]}>
                     <View style={{ padding: 5, marginRight: 8 }}><Ionicons name="tv-outline" size={22} color="#888" /></View>
-                    <View style={styles.manageInfo}><Text style={styles.manageTitle}>{ep.title}</Text><Text style={styles.manageMeta}>Episode • {ep.movies?.title} (S{ep.season_number} E{ep.episode_number})</Text></View>
+                    <View style={styles.manageInfo}>
+                      <Text style={styles.manageTitle}>{ep.title}</Text>
+                      <Text style={styles.manageMeta}>Episode • {ep.movies?.title} (S{ep.season_number} E{ep.episode_number}) • Uploaded by: {ep.profiles?.email || 'Super Admin'}</Text>
+                    </View>
                     <View style={styles.manageActions}>
                       <Pressable style={[styles.manageButton, styles.manageButtonRestore]} onPress={() => handleRestoreEpisode(ep.id)}>{updatingId === ep.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Restore</Text>}</Pressable>
                       <Pressable style={[styles.manageButton, styles.manageButtonTrash]} onPress={() => handleDeleteForeverEpisode(ep.id)}>{deletingId === ep.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Delete</Text>}</Pressable>
