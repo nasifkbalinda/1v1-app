@@ -108,9 +108,7 @@ export default function HomeScreen() {
   const filteredMovies = useMemo(() => filterByQuery(movies, searchQuery), [movies, searchQuery]);
   const heroMovie = !searchQuery.trim() && filteredMovies.length > 0 ? filteredMovies[0] : null;
   
-  // ---> THE FIX: Smarter List Distribution <---
-
-  // 1. Trending: Includes all movies (including the Hero if it's trending)
+  // 1. Trending: Includes all movies
   const trendingMovies = useMemo(() => {
     return [...filteredMovies].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 10);
   }, [filteredMovies]);
@@ -122,8 +120,9 @@ export default function HomeScreen() {
       : filteredMovies.slice(0, 12);
   }, [filteredMovies, heroMovie]);
 
-  // 3. Categories: Includes all movies (so the Hero will properly show up in 'Adventure', etc.)
+  // 3. Categories: Includes all movies
   const categoryOrder = ['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi'];
+  
   const moviesByCategory = useMemo(() => {
     const grouped: Record<string, Movie[]> = {};
     for (const movie of filteredMovies) {
@@ -135,6 +134,18 @@ export default function HomeScreen() {
     }
     return grouped;
   }, [filteredMovies]);
+
+  // ---> THE MISSING PIECE ADDED BACK IN <---
+  const sortedCategories = useMemo(() => {
+    return Object.keys(moviesByCategory).sort((a, b) => {
+      const ia = categoryOrder.indexOf(a);
+      const ib = categoryOrder.indexOf(b);
+      if (ia === -1 && ib === -1) return a.localeCompare(b);
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
+    });
+  }, [moviesByCategory, categoryOrder]);
 
   const NavLink = ({ title, path }: { title: string, path: string }) => {
     const isActive = pathname === path || (path === '/' && pathname === '/index');
