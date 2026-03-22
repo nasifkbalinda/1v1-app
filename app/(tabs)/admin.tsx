@@ -239,7 +239,7 @@ export default function AdminScreen() {
     return supabase.storage.from('movies').getPublicUrl(data.path).data.publicUrl;
   };
 
-  // ---> UPDATED: Secure API Request with Supabase Token <---
+  // ---> UPDATED: Uses relative URL and better error tracking <---
   const uploadVideoToMux = async (fileObj: any, taskId: string, subtitleUrl?: string | null, passthrough?: string): Promise<void> => {
     let blob = fileObj.file;
     if (!blob) { const response = await fetch(fileObj.uri); blob = await response.blob(); }
@@ -250,8 +250,8 @@ export default function AdminScreen() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) throw new Error('Authentication token missing. Please log in again.');
 
-    // 2. Call your Cloudflare API using the JWT Bearer token instead of the hardcoded secret
-    const backendRes = await fetch('https://1v1-app.pages.dev/api/mux', { 
+    // 2. Call your Cloudflare API using a RELATIVE URL so it stays on the correct branch
+    const backendRes = await fetch('/api/mux', { 
         method: 'POST', 
         headers: { 
           'Content-Type': 'application/json', 
@@ -260,9 +260,18 @@ export default function AdminScreen() {
         body: JSON.stringify({ subtitleUrl, passthrough }) 
     });
 
-    if (!backendRes.ok) throw new Error(`Backend Connection Failed`);
+    // 3. Much better error tracking
+    if (!backendRes.ok) {
+      let errorMsg = `Backend Error (${backendRes.status})`;
+      try {
+        const errData = await backendRes.json();
+        if (errData.error) errorMsg = errData.error;
+      } catch (e) {}
+      throw new Error(errorMsg);
+    }
+
     const muxUpload = await backendRes.json();
-    if (!muxUpload.data?.url) throw new Error(`No Upload URL provided`);
+    if (!muxUpload.data?.url) throw new Error(`No Upload URL provided by Mux`);
     
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
