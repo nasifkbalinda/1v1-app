@@ -5,7 +5,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 const ADMIN_EMAIL = 'saifnasif1@gmail.com';
 
@@ -31,8 +31,6 @@ export default function AdminScreen() {
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState<'Action' | 'Adventure' | 'Comedy' | 'Drama' | 'Sci-Fi' | null>(null);
   const [posterFile, setPosterFile] = useState<any | null>(null);
-  
-  // NEW: State for the Horizontal Backdrop Image
   const [backdropFile, setBackdropFile] = useState<any | null>(null);
   
   const [videoFile, setVideoFile] = useState<any | null>(null);
@@ -60,12 +58,17 @@ export default function AdminScreen() {
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editCategory, setEditCategory] = useState('');
-  const [editPosterUrl, setEditPosterUrl] = useState('');
   
-  // NEW: State for editing the backdrop URL
+  // NEW: State for Edit Uploads
+  const [editPosterUrl, setEditPosterUrl] = useState('');
+  const [editPosterFile, setEditPosterFile] = useState<any | null>(null);
+  
   const [editBackdropUrl, setEditBackdropUrl] = useState('');
+  const [editBackdropFile, setEditBackdropFile] = useState<any | null>(null);
   
   const [editVideoUrl, setEditVideoUrl] = useState('');
+  const [editVideoFile, setEditVideoFile] = useState<any | null>(null);
+  
   const [editEpisodes, setEditEpisodes] = useState<any[]>([]);
   const [loadingEpisodes, setLoadingEpisodes] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
@@ -174,7 +177,6 @@ export default function AdminScreen() {
     }
   };
 
-  // NEW: Picker specifically for Backdrops
   const pickBackdrop = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
     if (!result.canceled) {
@@ -192,6 +194,45 @@ export default function AdminScreen() {
     }
   };
 
+  // ---> NEW EDIT PICKERS <---
+  const pickEditPoster = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
+    if (!result.canceled) {
+      const asset = result.assets[0];
+      setEditPosterFile({ uri: asset.uri, name: asset.fileName ?? `edit_poster.jpg`, mimeType: asset.mimeType ?? 'image/jpeg', file: (asset as any).file });
+    }
+  };
+
+  const pickEditBackdrop = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
+    if (!result.canceled) {
+      const asset = result.assets[0];
+      setEditBackdropFile({ uri: asset.uri, name: asset.fileName ?? `edit_backdrop.jpg`, mimeType: asset.mimeType ?? 'image/jpeg', file: (asset as any).file });
+    }
+  };
+
+  const pickEditVideo = async () => {
+    const confirmMessage = "Upload New Video? This will immediately replace the current video when saved.";
+    if (Platform.OS === 'web' ? !window.confirm(confirmMessage) : false) return;
+    
+    if (Platform.OS !== 'web') {
+      Alert.alert("Replace Video", confirmMessage, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Choose File", onPress: async () => {
+            const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: true });
+            if (!result.canceled) setEditVideoFile({ uri: result.assets[0].uri, name: result.assets[0].name, mimeType: result.assets[0].mimeType ?? 'video/mp4', file: result.assets[0].file });
+        }}
+      ]);
+      return;
+    }
+
+    const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: true });
+    if (!result.canceled) {
+      const asset = result.assets[0];
+      setEditVideoFile({ uri: asset.uri, name: asset.name, mimeType: asset.mimeType ?? 'video/mp4', file: asset.file });
+    }
+  };
+
   const pickSubtitle = async (isEpisode: boolean = false) => {
     const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
     if (!result.canceled) {
@@ -204,7 +245,7 @@ export default function AdminScreen() {
   const uploadFile = async (fileObj: any, path: string, mimeType: string): Promise<string> => {
     let blob = fileObj.file;
     if (!blob) { const response = await fetch(fileObj.uri); blob = await response.blob(); }
-    const { data, error } = await supabase.storage.from('movies').upload(path, blob, { contentType: mimeType, upsert: false });
+    const { data, error } = await supabase.storage.from('movies').upload(path, blob, { contentType: mimeType, upsert: true }); // Changed to upsert true for edits
     if (error) throw error;
     return supabase.storage.from('movies').getPublicUrl(data.path).data.publicUrl;
   };
@@ -391,6 +432,11 @@ export default function AdminScreen() {
     setEditPosterUrl(movie.poster_url || '');
     setEditBackdropUrl(movie.backdrop_url || '');
     setEditVideoUrl(movie.video_url || '');
+    
+    // Reset file pickers
+    setEditPosterFile(null);
+    setEditBackdropFile(null);
+    setEditVideoFile(null);
 
     if (movie.type === 'TV Series') {
       setLoadingEpisodes(true);
@@ -404,11 +450,42 @@ export default function AdminScreen() {
     if (!editingMovie) return;
     setEditSaving(true);
     try {
+      let finalPosterUrl = editPosterUrl;
+      let finalBackdropUrl = editBackdropUrl;
+      const timestamp = Date.now();
+      const safeSlug = editTitle.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
+
+      // Upload new poster if selected
+      if (editPosterFile) {
+        finalPosterUrl = await uploadFile(editPosterFile, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
+      }
+      
+      // Upload new backdrop if selected
+      if (editBackdropFile) {
+        finalBackdropUrl = await uploadFile(editBackdropFile, `backdrops/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
+      }
+
       const { error: movieError } = await supabase.from('movies').update({ 
-          title: editTitle, description: editDescription, category: editCategory, poster_url: editPosterUrl, backdrop_url: editBackdropUrl, video_url: editVideoUrl
+          title: editTitle, 
+          description: editDescription, 
+          category: editCategory, 
+          poster_url: finalPosterUrl, 
+          backdrop_url: finalBackdropUrl 
+          // Note: Video URL is deliberately left alone here. Video replacement requires Mux re-processing.
         }).eq('id', editingMovie.id);
       
       if (movieError) throw movieError;
+
+      // Handle massive video replacement via Mux
+      if (editVideoFile && editingMovie.type === 'Movie') {
+        const taskId = `edit-${Date.now().toString()}`;
+        setUploadTasks(prev => [{ id: taskId, title: `Update Video: ${editTitle}`, type: 'Movie', progress: 0, status: 'uploading', message: 'Starting video replacement...' }, ...prev]);
+        
+        // Push the video to Mux background task
+        uploadVideoToMux(editVideoFile, taskId, null, `movies:${editingMovie.id}`).catch(e => {
+            updateTask(taskId, { status: 'error', message: e.message });
+        });
+      }
 
       if (editingMovie.type === 'TV Series' && editEpisodes.length > 0) {
         const episodeUpdates = editEpisodes.map(ep => supabase.from('episodes').update({ title: ep.title, season_number: parseInt(ep.season_number), episode_number: parseInt(ep.episode_number) }).eq('id', ep.id));
@@ -417,7 +494,7 @@ export default function AdminScreen() {
         if (firstError) throw firstError.error;
       }
 
-      if (Platform.OS === 'web') window.alert("Success: Saved successfully!"); else Alert.alert("Success", "Saved successfully!");
+      if (Platform.OS === 'web') window.alert("Success: Content updated!"); else Alert.alert("Success", "Content updated!");
       setEditingMovie(null);
       fetchAllMovies();
     } catch (error: any) {
@@ -670,8 +747,50 @@ export default function AdminScreen() {
                     <Text style={styles.label}>Edit {editingMovie.type}</Text>
                     <TextInput style={styles.input} value={editTitle} onChangeText={setEditTitle} placeholder="Title" />
                     <TextInput style={[styles.input, styles.descriptionInput]} multiline value={editDescription} onChangeText={setEditDescription} placeholder="Description" />
-                    <TextInput style={styles.input} value={editPosterUrl} onChangeText={setEditPosterUrl} placeholder="Poster URL (Vertical)" />
-                    <TextInput style={styles.input} value={editBackdropUrl} onChangeText={setEditBackdropUrl} placeholder="Backdrop URL (Optional Horizontal 16:9)" />
+                    
+                    {/* ---> VISUAL EDIT UPLOADERS <--- */}
+                    <Text style={styles.label}>Poster (Vertical)</Text>
+                    <View style={styles.editImageContainer}>
+                       {(editPosterFile || editPosterUrl) && (
+                         <Image 
+                           source={{ uri: editPosterFile ? editPosterFile.uri : editPosterUrl }} 
+                           style={styles.editPosterPreview} 
+                           resizeMode="cover" 
+                         />
+                       )}
+                       <Pressable style={styles.editUploadBtn} onPress={pickEditPoster}>
+                          <Ionicons name="camera-outline" size={20} color="#fff" />
+                          <Text style={styles.editUploadBtnText}>Replace Poster</Text>
+                       </Pressable>
+                    </View>
+
+                    <Text style={styles.label}>Backdrop (Horizontal 16:9)</Text>
+                    <View style={styles.editImageContainer}>
+                       {(editBackdropFile || editBackdropUrl) && (
+                         <Image 
+                           source={{ uri: editBackdropFile ? editBackdropFile.uri : editBackdropUrl }} 
+                           style={styles.editBackdropPreview} 
+                           resizeMode="cover" 
+                         />
+                       )}
+                       <Pressable style={styles.editUploadBtn} onPress={pickEditBackdrop}>
+                          <Ionicons name="image-outline" size={20} color="#fff" />
+                          <Text style={styles.editUploadBtnText}>Replace Backdrop</Text>
+                       </Pressable>
+                    </View>
+
+                    {editingMovie.type === 'Movie' && (
+                      <View style={{ marginTop: 10, marginBottom: 20 }}>
+                         <Text style={styles.label}>Video Content</Text>
+                         <Pressable style={[styles.selectButton, { borderColor: editVideoFile ? '#22c55e' : '#333', backgroundColor: '#181818' }]} onPress={pickEditVideo}>
+                            <Ionicons name="videocam" size={20} color={editVideoFile ? '#22c55e' : '#e50914'} />
+                            <Text style={styles.selectButtonText}>
+                               {editVideoFile ? `Queued: ${editVideoFile.name}` : 'Upload Replacement Video'}
+                            </Text>
+                         </Pressable>
+                         {editVideoFile && <Text style={{ color: '#eab308', fontSize: 12, marginTop: 6 }}>Warning: Saving will immediately overwrite the existing video.</Text>}
+                      </View>
+                    )}
                     
                     {editingMovie.type === 'TV Series' && (
                       <View style={styles.episodeManager}>
@@ -821,6 +940,14 @@ const styles = StyleSheet.create({
   manageButtonRestore: { backgroundColor: '#16a34a' },
   manageButtonText: { fontSize: 13, fontWeight: '600', color: '#fff' },
   editSection: { backgroundColor: '#111', padding: 20, borderRadius: 15, borderLeftWidth: 4, borderLeftColor: '#e50914' },
+  
+  // NEW STYLES FOR VISUAL UPLOADER
+  editImageContainer: { flexDirection: 'row', gap: 15, marginBottom: 20, alignItems: 'flex-start' },
+  editPosterPreview: { width: 80, aspectRatio: 2/3, borderRadius: 8, backgroundColor: '#222', borderWidth: 1, borderColor: '#333' },
+  editBackdropPreview: { width: 140, aspectRatio: 16/9, borderRadius: 8, backgroundColor: '#222', borderWidth: 1, borderColor: '#333' },
+  editUploadBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#181818', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: '#333', alignSelf: 'center' },
+  editUploadBtnText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
+
   editActionsRow: { flexDirection: 'row', gap: 10, marginTop: 20 },
   editCancelButton: { flex: 1, padding: 12, backgroundColor: '#333', borderRadius: 8, alignItems: 'center' },
   editCancelButtonText: { color: '#fff', fontWeight: 'bold' },
