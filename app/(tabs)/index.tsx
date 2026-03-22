@@ -200,7 +200,7 @@ export default function HomeScreen() {
               // @ts-ignore
               <img 
                 src={heroMovie.backdrop_url || heroMovie.poster_url || ''} 
-                style={{ position: 'absolute', width: '100%', height: '100%', objectFit: 'cover', objectPosition: '50% 20%', opacity: 0.9 }} 
+                style={{ position: 'absolute', width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center top', opacity: 0.9 }} 
                 alt="Hero Backdrop"
               />
             ) : (
