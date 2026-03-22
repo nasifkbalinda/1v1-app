@@ -207,7 +207,8 @@ export default function HomeScreen() {
               <Image source={{ uri: heroMovie.backdrop_url || heroMovie.poster_url || '' }} style={styles.heroImage} resizeMode="cover" />
             )}
             
-            <LinearGradient colors={['rgba(10,10,10,0.7)', 'transparent']} start={{x: 0, y: 0}} end={{x: 0, y: 0.3}} style={StyleSheet.absoluteFillObject} />
+            {/* The top gradient has been completely removed to keep the image bright! */}
+            
             <LinearGradient colors={['rgba(10,10,10,0.9)', 'transparent']} start={{x: 0, y: 0}} end={{x: 0.6, y: 0}} style={StyleSheet.absoluteFillObject} />
             <LinearGradient colors={['transparent', 'rgba(10,10,10,0.8)', '#0a0a0a']} locations={[0.5, 0.85, 1]} style={StyleSheet.absoluteFillObject} />
 
@@ -334,12 +335,17 @@ const styles = StyleSheet.create({
   logo: { fontSize: 32, fontWeight: 'bold', color: '#e50914', marginRight: 40 },
   primaryNav: { flexDirection: 'row', gap: 24 },
   navItem: { paddingVertical: 5 },
-  navText: { color: '#e5e5e5', fontSize: 13, fontWeight: '600' },
-  navTextActive: { color: '#fff', fontWeight: 'bold' },
+  
+  // Left side nav text - pure bright white with sharp drop shadow
+  navText: { color: '#e5e5e5', fontSize: 13, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  navTextActive: { color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,1)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   
   categoryNav: { flexDirection: 'row', gap: 20 },
-  filterLink: { color: '#e5e5e5', fontSize: 13, fontWeight: '600' },
-  filterLinkActive: { color: '#fff', fontWeight: 'bold' },
+  
+  // Right side filter text - matched perfectly to the left side
+  filterLink: { color: '#e5e5e5', fontSize: 13, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  filterLinkActive: { color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,1)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
+  
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(30,30,30,0.8)', borderRadius: 4, paddingHorizontal: 12, paddingVertical: 6, width: 220, borderWidth: 1, borderColor: '#333' },
   searchInput: { flex: 1, color: '#fff', fontSize: 13, outlineStyle: 'none' },
 
