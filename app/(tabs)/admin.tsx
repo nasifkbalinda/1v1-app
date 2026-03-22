@@ -49,7 +49,6 @@ export default function AdminScreen() {
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
   const [tvSeriesUploading, setTvSeriesUploading] = useState(false);
   
-  // ---> NEW: Holds our active upload connections so we can cancel them <---
   const xhrRefs = useRef<{ [key: string]: XMLHttpRequest }>({});
 
   const [manageMovies, setManageMovies] = useState<any[]>([]);
@@ -185,19 +184,39 @@ export default function AdminScreen() {
     }
   };
 
+  // ---> UPDATED: Error catching to prevent silent UI failures <---
+  const fetchAllMovies = useCallback(async () => { 
+    setManageLoading(true); 
+    
+    // Fetch Movies
+    const { data: mData, error: mError } = await supabase.from('movies').select('*, profiles(email)').order('title'); 
+    if (mError) {
+      console.error("Error fetching movies:", mError.message);
+      if (Platform.OS === 'web') window.alert("Database Error: " + mError.message);
+    }
+    setManageMovies(mData ?? []); 
+    
+    // Fetch Episodes
+    const { data: eData, error: eError } = await supabase.from('episodes').select('*, movies(title), profiles(email)').eq('status', 'trash').order('season_number'); 
+    if (eError) {
+      console.error("Error fetching episodes:", eError.message);
+    }
+    setTrashedEpisodes(eData ?? []); 
+    
+    setManageLoading(false); 
+  }, []);
+
   useEffect(() => { if (activeSection === 'dashboard') fetchDashboardStats(); }, [activeSection, fetchDashboardStats]);
   useEffect(() => { if (activeSection === 'team') fetchTeamMembers(); }, [activeSection, fetchTeamMembers]);
+  useEffect(() => { if (activeSection === 'manage' || activeSection === 'trash') fetchAllMovies(); }, [activeSection, fetchAllMovies]);
 
   const updateTask = (id: string, updates: Partial<UploadTask>) => { setUploadTasks(prev => prev.map(task => task.id === id ? { ...task, ...updates } : task)); };
   const removeTask = (id: string) => { setUploadTasks(prev => prev.filter(task => task.id !== id)); };
 
-  // ---> NEW: Cancel function <---
   const handleCancelTask = (taskId: string) => {
-    // If the XHR is currently active, abort it
     if (xhrRefs.current[taskId]) {
       xhrRefs.current[taskId].abort();
     } else {
-      // If it hasn't reached the XHR phase yet, just mark it as errored
       updateTask(taskId, { status: 'error', message: 'Upload Cancelled by User' });
     }
   };
@@ -279,7 +298,6 @@ export default function AdminScreen() {
     
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      // ---> NEW: Store the connection in our ref so we can abort it later <---
       xhrRefs.current[taskId] = xhr;
       
       xhr.open('PUT', muxUpload.data.url);
@@ -289,7 +307,7 @@ export default function AdminScreen() {
         } 
       };
       xhr.onload = () => { 
-        delete xhrRefs.current[taskId]; // clean up memory
+        delete xhrRefs.current[taskId];
         if (xhr.status >= 200 && xhr.status < 300) { 
           updateTask(taskId, { status: 'done', progress: 100, message: 'Upload Complete!' }); 
           resolve(); 
@@ -301,8 +319,6 @@ export default function AdminScreen() {
         delete xhrRefs.current[taskId];
         reject(new Error(`Network error`)); 
       };
-      
-      // ---> NEW: Handle the abort event gracefully <---
       xhr.onabort = () => {
         delete xhrRefs.current[taskId];
         reject(new Error(`Upload Cancelled by User`));
@@ -382,17 +398,7 @@ export default function AdminScreen() {
   };
 
   const fetchTvSeries = useCallback(async () => { setLoadingSeries(true); const { data } = await supabase.from('movies').select('id, title').eq('type', 'TV Series').eq('status', 'active').order('title'); setTvSeries(data ?? []); setLoadingSeries(false); }, []);
-  const fetchAllMovies = useCallback(async () => { 
-    setManageLoading(true); 
-    const { data: mData } = await supabase.from('movies').select('*, profiles(email)').order('title'); 
-    setManageMovies(mData ?? []); 
-    const { data: eData } = await supabase.from('episodes').select('*, movies(title), profiles(email)').eq('status', 'trash').order('season_number'); 
-    setTrashedEpisodes(eData ?? []); 
-    setManageLoading(false); 
-  }, []);
-
   useEffect(() => { if (uploadMode === 'episode') fetchTvSeries(); }, [uploadMode, fetchTvSeries]);
-  useEffect(() => { if (activeSection === 'manage' || activeSection === 'trash') fetchAllMovies(); }, [activeSection, fetchAllMovies]);
 
   const startEditing = async (movie: any) => {
     setEditingMovie(movie); setEditTitle(movie.title); setEditDescription(movie.description || ''); setEditCategory(movie.category || ''); setEditPosterUrl(movie.poster_url || ''); setEditBackdropUrl(movie.backdrop_url || ''); setEditVideoUrl(movie.video_url || '');
@@ -589,7 +595,6 @@ export default function AdminScreen() {
                     <View style={styles.taskHeader}>
                       <Text style={styles.taskTitle}>{task.title}</Text>
                       <View style={{flexDirection: 'row', gap: 15, alignItems: 'center'}}>
-                        {/* ---> NEW: Show the Cancel button while uploading <--- */}
                         {task.status === 'uploading' && (
                            <Pressable onPress={() => handleCancelTask(task.id)} style={{flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#333', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6}}>
                              <Ionicons name="close-circle" size={16} color="#ef4444" />
