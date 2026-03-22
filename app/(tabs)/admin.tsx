@@ -162,7 +162,6 @@ export default function AdminScreen() {
     } catch (e) { console.error(e); } finally { setTeamLoading(false); }
   }, [userRole]);
 
-  // ---> UPDATED: Added error handling and fixed demotion logic <---
   const handleToggleRole = async (targetId: string, currentRole: string) => {
     if (userRole !== 'super_admin') return;
     
@@ -240,12 +239,28 @@ export default function AdminScreen() {
     return supabase.storage.from('movies').getPublicUrl(data.path).data.publicUrl;
   };
 
+  // ---> UPDATED: Secure API Request with Supabase Token <---
   const uploadVideoToMux = async (fileObj: any, taskId: string, subtitleUrl?: string | null, passthrough?: string): Promise<void> => {
     let blob = fileObj.file;
     if (!blob) { const response = await fetch(fileObj.uri); blob = await response.blob(); }
-    updateTask(taskId, { message: 'Connecting to Mux backend...' });
-    const backendRes = await fetch('https://1v1-app.pages.dev/api/mux', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'v1-super-admin-2026' }, body: JSON.stringify({ subtitleUrl, passthrough }) });
-    if (!backendRes.ok) throw new Error(`Mux Connection Failed`);
+    
+    updateTask(taskId, { message: 'Connecting to secure backend...' });
+
+    // 1. Get the secure Supabase Token
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) throw new Error('Authentication token missing. Please log in again.');
+
+    // 2. Call your Cloudflare API using the JWT Bearer token instead of the hardcoded secret
+    const backendRes = await fetch('https://1v1-app.pages.dev/api/mux', { 
+        method: 'POST', 
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Authorization': `Bearer ${session.access_token}` 
+        }, 
+        body: JSON.stringify({ subtitleUrl, passthrough }) 
+    });
+
+    if (!backendRes.ok) throw new Error(`Backend Connection Failed`);
     const muxUpload = await backendRes.json();
     if (!muxUpload.data?.url) throw new Error(`No Upload URL provided`);
     
