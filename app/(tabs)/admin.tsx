@@ -22,7 +22,6 @@ export default function AdminScreen() {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
   
-  // ---> NEW RBAC STATES <---
   const [userRole, setUserRole] = useState<'super_admin' | 'manager' | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
 
@@ -77,7 +76,6 @@ export default function AdminScreen() {
 
   const [statsLoading, setStatsLoading] = useState(false);
   
-  // ---> NEW TEAM STATES <---
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [teamSearchQuery, setTeamSearchQuery] = useState('');
   const [teamLoading, setTeamLoading] = useState(false);
@@ -87,7 +85,6 @@ export default function AdminScreen() {
     totalUsers: 0, dau: 0, wau: 0, mau: 0, leaderboard: [] as any[]
   });
 
-  // ---> UPDATED AUTH CHECKER <---
   useEffect(() => {
     const checkAdmin = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -98,7 +95,6 @@ export default function AdminScreen() {
         if (profile && (profile.role === 'super_admin' || profile.role === 'manager')) {
           setIsAuthorized(true);
           setUserRole(profile.role);
-          // Set safe default tab based on role
           setActiveSection(profile.role === 'super_admin' ? 'dashboard' : 'upload');
         } else {
           if (Platform.OS === 'web') window.alert("Access Denied: Admin or Manager privileges required.");
@@ -114,7 +110,7 @@ export default function AdminScreen() {
   }, [router]);
 
   const fetchDashboardStats = useCallback(async () => {
-    if (userRole !== 'super_admin') return; // Double protection
+    if (userRole !== 'super_admin') return;
     setStatsLoading(true);
     try {
       const { count: movieCount } = await supabase.from('movies').select('*', { count: 'exact', head: true }).eq('type', 'Movie').eq('status', 'active');
@@ -156,14 +152,12 @@ export default function AdminScreen() {
     } catch (err) { console.error("Failed to load stats", err); } finally { setStatsLoading(false); }
   }, [userRole]);
 
-  // ---> NEW TEAM FETCHING LOGIC <---
+  // ---> FETCH TEAM (NOW INCLUDES EMAIL) <---
   const fetchTeamMembers = useCallback(async () => {
     if (userRole !== 'super_admin') return;
     setTeamLoading(true);
     try {
-      // Note: Assumes your profiles table has an 'email' column or you use username. 
-      // If no email column exists yet, we just pull the IDs and Roles for now.
-      let query = supabase.from('profiles').select('id, role');
+      let query = supabase.from('profiles').select('id, role, email');
       const { data, error } = await query.order('role', { ascending: true });
       if (!error && data) setTeamMembers(data);
     } catch (e) { console.error(e); } finally { setTeamLoading(false); }
@@ -270,7 +264,6 @@ export default function AdminScreen() {
       let backdropUrl = backdrop ? await uploadFile(backdrop, `backdrops/${timestamp}-${safeSlug}.jpg`, 'image/jpeg') : null;
 
       updateTask(taskId, { message: 'Creating Database Entry...' });
-      // ---> ADDED AUDIT TRAIL: uploaded_by <---
       const { data, error } = await supabase.from('movies').insert({ 
             title, description: desc || null, poster_url: posterUrl, backdrop_url: backdropUrl, type: 'Movie', category: cat, status: 'processing', uploaded_by: userId 
         }).select('id').single();
@@ -296,7 +289,6 @@ export default function AdminScreen() {
       let subUrl = subtitle ? await uploadFile(subtitle, `subtitles/${timestamp}-${safeSlug}.vtt`, 'text/vtt') : null;
 
       updateTask(taskId, { message: 'Registering Episode...' });
-      // ---> ADDED AUDIT TRAIL: uploaded_by <---
       const { data, error } = await supabase.from('episodes').insert({ movie_id: seriesId, season_number: seasonNum, episode_number: episodeNum, title: epTitle, status: 'processing', uploaded_by: userId }).select('id').single();
       if (error) throw new Error(`Database Error: ${error.message}`);
       await uploadVideoToMux(video, taskId, subUrl, `episodes:${data.id}`);
@@ -316,7 +308,6 @@ export default function AdminScreen() {
       const timestamp = Date.now(); const safeSlug = title.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
       const posterUrl = await uploadFile(posterFile, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
       let backdropUrl = backdropFile ? await uploadFile(backdropFile, `backdrops/${timestamp}-${safeSlug}.jpg`, 'image/jpeg') : null;
-      // ---> ADDED AUDIT TRAIL <---
       const { error } = await supabase.from('movies').insert({ title, description: description || null, poster_url: posterUrl, backdrop_url: backdropUrl, type: 'TV Series', category, status: 'active', uploaded_by: userId });
       if (error) throw error;
       setTitle(''); setDescription(''); setCategory(null); setPosterFile(null); setBackdropFile(null); fetchTvSeries();
@@ -391,7 +382,6 @@ export default function AdminScreen() {
     <View style={styles.container}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         
-        {/* ---> RBAC DYNAMIC TAB BAR <--- */}
         <View style={styles.tabRow}>
           {userRole === 'super_admin' && (
             <Pressable style={[styles.tabButton, activeSection === 'dashboard' && styles.tabButtonActive]} onPress={() => { setActiveSection('dashboard'); setEditingMovie(null); }}><Text style={[styles.tabButtonLabel, activeSection === 'dashboard' && styles.tabButtonLabelActive]}>Dashboard</Text></Pressable>
@@ -674,13 +664,31 @@ export default function AdminScreen() {
                </Pressable>
              </View>
              
-             <Text style={styles.label}>Control who can upload and manage content.</Text>
+             <Text style={styles.label}>Search by email to promote users to Managers.</Text>
+
+             {/* ---> NEW SEARCH BAR <--- */}
+             <View style={[styles.searchBox, { width: '100%', marginBottom: 20 }]}>
+               <Ionicons name="search" size={18} color="#888" style={{ marginRight: 10 }} />
+               <TextInput 
+                 style={styles.searchInput} 
+                 placeholder="Search users by email..." 
+                 placeholderTextColor="#666" 
+                 value={teamSearchQuery} 
+                 onChangeText={setTeamSearchQuery} 
+               />
+             </View>
              
              <View style={styles.leaderboardSection}>
-                {teamMembers.map(member => (
+                {teamMembers
+                  .filter(member => 
+                     (member.email && member.email.toLowerCase().includes(teamSearchQuery.toLowerCase())) || 
+                     member.id.includes(teamSearchQuery)
+                  )
+                  .map(member => (
                   <View key={member.id} style={[styles.leaderboardRow, {justifyContent: 'space-between'}]}>
                      <View style={{flex: 1}}>
-                       <Text style={styles.leaderboardTitle}>User ID: {member.id.substring(0,8)}...</Text>
+                       {/* ---> SHOWS EMAIL INSTEAD OF ID <--- */}
+                       <Text style={styles.leaderboardTitle}>{member.email || `User ID: ${member.id.substring(0,8)}...`}</Text>
                        <Text style={[styles.leaderboardCategory, { color: member.role === 'super_admin' ? '#eab308' : member.role === 'manager' ? '#3b82f6' : '#888' }]}>
                          {member.role ? member.role.toUpperCase() : 'USER'}
                        </Text>
@@ -795,5 +803,8 @@ const styles = StyleSheet.create({
   rankText: { fontSize: 16, fontWeight: 'bold', color: '#888', width: 40 },
   leaderboardTitle: { fontSize: 15, fontWeight: 'bold', color: '#fff' },
   leaderboardCategory: { fontSize: 12, color: '#666', marginTop: 2 },
-  leaderboardViews: { fontSize: 16, fontWeight: 'bold', color: '#e50914' }
+  leaderboardViews: { fontSize: 16, fontWeight: 'bold', color: '#e50914' },
+  
+  searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: '#2a2a2a' },
+  searchInput: { flex: 1, color: '#fff', fontSize: 14, outlineStyle: 'none' },
 });
