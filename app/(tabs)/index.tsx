@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { usePathname, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Image, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const POSTER_WIDTH = 120;
@@ -108,19 +108,16 @@ export default function HomeScreen() {
   const filteredMovies = useMemo(() => filterByQuery(movies, searchQuery), [movies, searchQuery]);
   const heroMovie = !searchQuery.trim() && filteredMovies.length > 0 ? filteredMovies[0] : null;
   
-  // 1. Trending: Includes all movies
   const trendingMovies = useMemo(() => {
     return [...filteredMovies].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 10);
   }, [filteredMovies]);
 
-  // 2. Latest Uploads: Explicitly HIDES the Hero movie to avoid immediate duplication
   const latestUploadsMovies = useMemo(() => {
     return heroMovie 
       ? filteredMovies.filter(m => m.id !== heroMovie.id).slice(0, 12)
       : filteredMovies.slice(0, 12);
   }, [filteredMovies, heroMovie]);
 
-  // 3. Categories: Includes all movies
   const categoryOrder = ['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi'];
   
   const moviesByCategory = useMemo(() => {
@@ -135,7 +132,6 @@ export default function HomeScreen() {
     return grouped;
   }, [filteredMovies]);
 
-  // ---> THE MISSING PIECE ADDED BACK IN <---
   const sortedCategories = useMemo(() => {
     return Object.keys(moviesByCategory).sort((a, b) => {
       const ia = categoryOrder.indexOf(a);
@@ -155,6 +151,10 @@ export default function HomeScreen() {
       </Pressable>
     );
   };
+
+  const heroHeight = isDesktop
+    ? Math.min(width / (16 / 9), height * 0.85)
+    : height * 0.5;
 
   if (loading) return (<View style={styles.loadingContainer}><ActivityIndicator size="large" color="#e50914" /></View>);
 
@@ -194,8 +194,18 @@ export default function HomeScreen() {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={moviesRefreshing} onRefresh={handleManualRefresh} tintColor="#e50914" />}>
         
         {heroMovie && (
-          <View style={[styles.heroContainer, isDesktop ? { aspectRatio: 16/9, maxHeight: height * 0.85 } : { height: height * 0.5 }]}>
-            <Image source={{ uri: heroMovie.backdrop_url || heroMovie.poster_url || '' }} style={styles.heroImage} resizeMode="cover" />
+          <View style={[styles.heroContainer, { height: heroHeight }]}>
+            
+            {Platform.OS === 'web' ? (
+              // @ts-ignore
+              <img 
+                src={heroMovie.backdrop_url || heroMovie.poster_url || ''} 
+                style={{ position: 'absolute', width: '100%', height: '100%', objectFit: 'cover', objectPosition: '50% 20%', opacity: 0.9 }} 
+                alt="Hero Backdrop"
+              />
+            ) : (
+              <Image source={{ uri: heroMovie.backdrop_url || heroMovie.poster_url || '' }} style={styles.heroImage} resizeMode="cover" />
+            )}
             
             <LinearGradient colors={['rgba(10,10,10,0.9)', 'transparent']} start={{x: 0, y: 0}} end={{x: 0.6, y: 0}} style={StyleSheet.absoluteFillObject} />
             <LinearGradient colors={['transparent', 'rgba(10,10,10,0.8)', '#0a0a0a']} locations={[0.5, 0.85, 1]} style={StyleSheet.absoluteFillObject} />
@@ -338,8 +348,13 @@ const styles = StyleSheet.create({
   mobileFilterPillText: { color: '#bdbdbd', fontSize: 12, fontWeight: 'bold' },
   mobileFilterPillTextActive: { color: '#fff' },
 
-  heroContainer: { width: '100%', position: 'relative' },
-  heroImage: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%', opacity: 0.9 },
+  heroContainer: { width: '100%', position: 'relative', overflow: 'hidden' },
+  heroImage: { 
+    ...StyleSheet.absoluteFillObject, 
+    width: '100%', 
+    height: '100%', 
+    opacity: 0.9,
+  },
   heroContent: { position: 'absolute', bottom: '15%', left: 20, right: 20, zIndex: 10 },
   heroContentDesktop: { left: 40, width: '45%', bottom: '12%' },
   
