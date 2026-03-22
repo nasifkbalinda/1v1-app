@@ -17,8 +17,11 @@ export async function onRequest(context) {
   const MUX_TOKEN_SECRET = 'fBcT0uzhTYHJZBHwtOJW0l6NJ3Jc1YL6x6rfTy1+cJG/7D+vZlj9duYR2Y2lEoCBMY6EIGTxH8F';
   const credentials = btoa(`${MUX_TOKEN_ID}:${MUX_TOKEN_SECRET}`);
 
-  // ---> YOUR SUPABASE KEYS (NO TRAILING SLASH IN URL) <---
-  const SUPABASE_URL = 'https://acmslndavkavlacdzst.supabase.co';
+  // ---> YOUR SUPABASE KEYS <---
+  // Paste exactly what is inside your .env file here.
+  // Make sure there are NO spaces inside the quotes and NO trailing slash!
+  // Example: 'https://abcdefghijklmnop.supabase.co'
+  const SUPABASE_URL = 'https://acmslndavkvavlacdzst.supabase.co';
   const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjbXNsbmRhdmt2YXZsYWNkenN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzMTY0NDksImV4cCI6MjA4Nzg5MjQ0OX0.v4jIVZZZ4Ampufl75GeUVcfg-oxyoPvDE66u6RVy6VQ';
 
   if (request.method === 'POST') {
@@ -29,7 +32,7 @@ export async function onRequest(context) {
     }
     const token = authHeader.split(' ')[1];
 
-    // 3. DETECTIVE MODE: Ask Supabase if token is legit and catch the EXACT error
+    // 3. Ask Supabase if token is legit and catch the EXACT error
     const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: { 
         'Authorization': `Bearer ${token}`, 
@@ -38,7 +41,6 @@ export async function onRequest(context) {
     });
 
     if (!userRes.ok) {
-      // ---> THIS WILL PRINT SUPABASE'S EXACT ERROR ON YOUR SCREEN <---
       const textError = await userRes.text();
       return new Response(JSON.stringify({ error: `Supabase Auth Rejected: Status ${userRes.status}. Details: ${textError}` }), { 
         status: 401, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } 
