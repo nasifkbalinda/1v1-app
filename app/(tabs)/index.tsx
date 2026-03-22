@@ -339,7 +339,14 @@ const styles = StyleSheet.create({
   mobileFilterPillTextActive: { color: '#fff' },
 
   heroContainer: { width: '100%', position: 'relative' },
-  heroImage: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%', opacity: 0.9 },
+  heroImage: { 
+    ...StyleSheet.absoluteFillObject, 
+    width: '100%', 
+    height: '100%', 
+    opacity: 0.9,
+    // THE FIX: Tells the web browser to anchor the image to the top, saving the heads!
+    ...(Platform.OS === 'web' ? { objectPosition: 'top' as any } : {})
+  },
   heroContent: { position: 'absolute', bottom: '15%', left: 20, right: 20, zIndex: 10 },
   heroContentDesktop: { left: 40, width: '45%', bottom: '12%' },
   
