@@ -152,7 +152,6 @@ export default function AdminScreen() {
     } catch (err) { console.error("Failed to load stats", err); } finally { setStatsLoading(false); }
   }, [userRole]);
 
-  // ---> FETCH TEAM (NOW INCLUDES EMAIL) <---
   const fetchTeamMembers = useCallback(async () => {
     if (userRole !== 'super_admin') return;
     setTeamLoading(true);
@@ -163,14 +162,28 @@ export default function AdminScreen() {
     } catch (e) { console.error(e); } finally { setTeamLoading(false); }
   }, [userRole]);
 
+  // ---> UPDATED: Added error handling and fixed demotion logic <---
   const handleToggleRole = async (targetId: string, currentRole: string) => {
     if (userRole !== 'super_admin') return;
-    const newRole = currentRole === 'manager' ? 'user' : 'manager';
+    
+    const safeCurrentRole = currentRole || 'user';
+    const newRole = safeCurrentRole === 'manager' ? 'user' : 'manager';
+    
     const msg = `Change this user to ${newRole.toUpperCase()}?`;
     
     if (Platform.OS === 'web' ? window.confirm(msg) : true) {
       setUpdatingId(targetId);
-      await supabase.from('profiles').update({ role: newRole }).eq('id', targetId);
+      
+      const { error } = await supabase.from('profiles').update({ role: newRole }).eq('id', targetId);
+      
+      if (error) {
+        if (Platform.OS === 'web') window.alert("Failed to update: " + error.message);
+        else Alert.alert("Error", "Failed to update: " + error.message);
+      } else {
+        if (Platform.OS === 'web') window.alert("Success! User role updated.");
+        else Alert.alert("Success", "User role updated.");
+      }
+      
       fetchTeamMembers();
       setUpdatingId(null);
     }
@@ -666,7 +679,6 @@ export default function AdminScreen() {
              
              <Text style={styles.label}>Search by email to promote users to Managers.</Text>
 
-             {/* ---> NEW SEARCH BAR <--- */}
              <View style={[styles.searchBox, { width: '100%', marginBottom: 20 }]}>
                <Ionicons name="search" size={18} color="#888" style={{ marginRight: 10 }} />
                <TextInput 
@@ -687,7 +699,6 @@ export default function AdminScreen() {
                   .map(member => (
                   <View key={member.id} style={[styles.leaderboardRow, {justifyContent: 'space-between'}]}>
                      <View style={{flex: 1}}>
-                       {/* ---> SHOWS EMAIL INSTEAD OF ID <--- */}
                        <Text style={styles.leaderboardTitle}>{member.email || `User ID: ${member.id.substring(0,8)}...`}</Text>
                        <Text style={[styles.leaderboardCategory, { color: member.role === 'super_admin' ? '#eab308' : member.role === 'manager' ? '#3b82f6' : '#888' }]}>
                          {member.role ? member.role.toUpperCase() : 'USER'}
@@ -804,7 +815,6 @@ const styles = StyleSheet.create({
   leaderboardTitle: { fontSize: 15, fontWeight: 'bold', color: '#fff' },
   leaderboardCategory: { fontSize: 12, color: '#666', marginTop: 2 },
   leaderboardViews: { fontSize: 16, fontWeight: 'bold', color: '#e50914' },
-  
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: '#2a2a2a' },
   searchInput: { flex: 1, color: '#fff', fontSize: 14, outlineStyle: 'none' },
 });
