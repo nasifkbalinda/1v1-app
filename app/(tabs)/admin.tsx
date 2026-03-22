@@ -7,8 +7,6 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-const ADMIN_EMAIL = 'saifnasif1@gmail.com';
-
 type UploadTask = { 
   id: string; 
   title: string; 
@@ -23,8 +21,12 @@ export default function AdminScreen() {
   const router = useRouter();
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
+  
+  // ---> NEW RBAC STATES <---
+  const [userRole, setUserRole] = useState<'super_admin' | 'manager' | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
 
-  const [activeSection, setActiveSection] = useState<'dashboard' | 'upload' | 'manage' | 'trash'>('dashboard');
+  const [activeSection, setActiveSection] = useState<'dashboard' | 'upload' | 'manage' | 'trash' | 'team'>('dashboard');
   const [uploadMode, setUploadMode] = useState<'movie' | 'tvseries' | 'episode'>('movie');
   
   const [title, setTitle] = useState('');
@@ -59,13 +61,10 @@ export default function AdminScreen() {
   const [editDescription, setEditDescription] = useState('');
   const [editCategory, setEditCategory] = useState('');
   
-  // NEW: State for Edit Uploads
   const [editPosterUrl, setEditPosterUrl] = useState('');
   const [editPosterFile, setEditPosterFile] = useState<any | null>(null);
-  
   const [editBackdropUrl, setEditBackdropUrl] = useState('');
   const [editBackdropFile, setEditBackdropFile] = useState<any | null>(null);
-  
   const [editVideoUrl, setEditVideoUrl] = useState('');
   const [editVideoFile, setEditVideoFile] = useState<any | null>(null);
   
@@ -78,28 +77,36 @@ export default function AdminScreen() {
 
   const [statsLoading, setStatsLoading] = useState(false);
   
+  // ---> NEW TEAM STATES <---
+  const [teamMembers, setTeamMembers] = useState<any[]>([]);
+  const [teamSearchQuery, setTeamSearchQuery] = useState('');
+  const [teamLoading, setTeamLoading] = useState(false);
+  
   const [platformStats, setPlatformStats] = useState({
-    totalViews: 0,
-    totalMovies: 0,
-    totalSeries: 0,
-    topCategory: 'N/A',
-    topTitle: 'No Views Yet',
-    totalUsers: 0,
-    dau: 0,
-    wau: 0,
-    mau: 0,
-    leaderboard: [] as any[]
+    totalViews: 0, totalMovies: 0, totalSeries: 0, topCategory: 'N/A', topTitle: 'No Views Yet',
+    totalUsers: 0, dau: 0, wau: 0, mau: 0, leaderboard: [] as any[]
   });
 
+  // ---> UPDATED AUTH CHECKER <---
   useEffect(() => {
     const checkAdmin = async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (user && user.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
-        setIsAuthorized(true);
+      if (user) {
+        setUserId(user.id);
+        const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+        
+        if (profile && (profile.role === 'super_admin' || profile.role === 'manager')) {
+          setIsAuthorized(true);
+          setUserRole(profile.role);
+          // Set safe default tab based on role
+          setActiveSection(profile.role === 'super_admin' ? 'dashboard' : 'upload');
+        } else {
+          if (Platform.OS === 'web') window.alert("Access Denied: Admin or Manager privileges required.");
+          else Alert.alert("Access Denied", "Admin or Manager privileges required.");
+          router.replace('/'); 
+        }
       } else {
-        if (Platform.OS === 'web') window.alert("Access Denied: Admin privileges required.");
-        else Alert.alert("Access Denied", "Admin privileges required.");
-        router.replace('/'); 
+        router.replace('/');
       }
       setAuthChecking(false);
     };
@@ -107,37 +114,28 @@ export default function AdminScreen() {
   }, [router]);
 
   const fetchDashboardStats = useCallback(async () => {
+    if (userRole !== 'super_admin') return; // Double protection
     setStatsLoading(true);
     try {
       const { count: movieCount } = await supabase.from('movies').select('*', { count: 'exact', head: true }).eq('type', 'Movie').eq('status', 'active');
       const { count: seriesCount } = await supabase.from('movies').select('*', { count: 'exact', head: true }).eq('type', 'TV Series').eq('status', 'active');
-      
       const { data: viewData } = await supabase.from('movies').select('id, title, views, category, type').eq('status', 'active');
       
-      let totalViews = 0;
-      const categoryCounts: Record<string, number> = {};
-      let topTitleName = 'No Views Yet';
-      let highestViewCount = -1;
-      let sortedLeaderboard: any[] = [];
+      let totalViews = 0; const categoryCounts: Record<string, number> = {};
+      let topTitleName = 'No Views Yet'; let highestViewCount = -1; let sortedLeaderboard: any[] = [];
 
       if (viewData) {
         viewData.forEach(item => {
           const v = item.views || 0;
           totalViews += v;
           if (item.category) categoryCounts[item.category] = (categoryCounts[item.category] || 0) + v;
-          if (v > highestViewCount && v > 0) {
-            highestViewCount = v;
-            topTitleName = `${item.title} (${v} views)`;
-          }
+          if (v > highestViewCount && v > 0) { highestViewCount = v; topTitleName = `${item.title} (${v} views)`; }
         });
         sortedLeaderboard = [...viewData].sort((a, b) => (b.views || 0) - (a.views || 0));
       }
 
-      let topCat = 'None Yet';
-      let maxCatViews = -1;
-      for (const [cat, views] of Object.entries(categoryCounts)) {
-        if (views > maxCatViews) { maxCatViews = views; topCat = cat; }
-      }
+      let topCat = 'None Yet'; let maxCatViews = -1;
+      for (const [cat, views] of Object.entries(categoryCounts)) { if (views > maxCatViews) { maxCatViews = views; topCat = cat; } }
 
       const now = new Date();
       const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
@@ -150,102 +148,87 @@ export default function AdminScreen() {
       const { count: mauCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).gte('last_active', thirtyDaysAgo);
 
       setPlatformStats({
-        totalMovies: movieCount || 0,
-        totalSeries: seriesCount || 0,
-        totalViews,
+        totalMovies: movieCount || 0, totalSeries: seriesCount || 0, totalViews,
         topCategory: maxCatViews > 0 ? `${topCat} (${maxCatViews})` : 'Not enough data',
-        topTitle: topTitleName,
-        totalUsers: totalUsersCount || 0,
-        dau: dauCount || 0,
-        wau: wauCount || 0,
-        mau: mauCount || 0,
-        leaderboard: sortedLeaderboard.slice(0, 10)
+        topTitle: topTitleName, totalUsers: totalUsersCount || 0,
+        dau: dauCount || 0, wau: wauCount || 0, mau: mauCount || 0, leaderboard: sortedLeaderboard.slice(0, 10)
       });
     } catch (err) { console.error("Failed to load stats", err); } finally { setStatsLoading(false); }
-  }, []);
+  }, [userRole]);
+
+  // ---> NEW TEAM FETCHING LOGIC <---
+  const fetchTeamMembers = useCallback(async () => {
+    if (userRole !== 'super_admin') return;
+    setTeamLoading(true);
+    try {
+      // Note: Assumes your profiles table has an 'email' column or you use username. 
+      // If no email column exists yet, we just pull the IDs and Roles for now.
+      let query = supabase.from('profiles').select('id, role');
+      const { data, error } = await query.order('role', { ascending: true });
+      if (!error && data) setTeamMembers(data);
+    } catch (e) { console.error(e); } finally { setTeamLoading(false); }
+  }, [userRole]);
+
+  const handleToggleRole = async (targetId: string, currentRole: string) => {
+    if (userRole !== 'super_admin') return;
+    const newRole = currentRole === 'manager' ? 'user' : 'manager';
+    const msg = `Change this user to ${newRole.toUpperCase()}?`;
+    
+    if (Platform.OS === 'web' ? window.confirm(msg) : true) {
+      setUpdatingId(targetId);
+      await supabase.from('profiles').update({ role: newRole }).eq('id', targetId);
+      fetchTeamMembers();
+      setUpdatingId(null);
+    }
+  };
 
   useEffect(() => { if (activeSection === 'dashboard') fetchDashboardStats(); }, [activeSection, fetchDashboardStats]);
+  useEffect(() => { if (activeSection === 'team') fetchTeamMembers(); }, [activeSection, fetchTeamMembers]);
 
   const updateTask = (id: string, updates: Partial<UploadTask>) => { setUploadTasks(prev => prev.map(task => task.id === id ? { ...task, ...updates } : task)); };
   const removeTask = (id: string) => { setUploadTasks(prev => prev.filter(task => task.id !== id)); };
 
   const pickPoster = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
-    if (!result.canceled) {
-      const asset = result.assets[0];
-      setPosterFile({ uri: asset.uri, name: asset.fileName ?? `poster.jpg`, mimeType: asset.mimeType ?? 'image/jpeg', file: (asset as any).file });
-    }
+    if (!result.canceled) setPosterFile({ uri: result.assets[0].uri, name: result.assets[0].fileName ?? `poster.jpg`, mimeType: result.assets[0].mimeType ?? 'image/jpeg', file: (result.assets[0] as any).file });
   };
-
   const pickBackdrop = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
-    if (!result.canceled) {
-      const asset = result.assets[0];
-      setBackdropFile({ uri: asset.uri, name: asset.fileName ?? `backdrop.jpg`, mimeType: asset.mimeType ?? 'image/jpeg', file: (asset as any).file });
-    }
+    if (!result.canceled) setBackdropFile({ uri: result.assets[0].uri, name: result.assets[0].fileName ?? `backdrop.jpg`, mimeType: result.assets[0].mimeType ?? 'image/jpeg', file: (result.assets[0] as any).file });
   };
-
   const pickVideo = async (isEpisode: boolean = false) => {
     const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: true });
     if (!result.canceled) {
-      const asset = result.assets[0];
-      const fileData = { uri: asset.uri, name: asset.name, mimeType: asset.mimeType ?? 'video/mp4', file: asset.file };
-      if (isEpisode) setEpisodeVideoFile(fileData); else setVideoFile(fileData);
+      const fd = { uri: result.assets[0].uri, name: result.assets[0].name, mimeType: result.assets[0].mimeType ?? 'video/mp4', file: result.assets[0].file };
+      if (isEpisode) setEpisodeVideoFile(fd); else setVideoFile(fd);
     }
   };
-
-  // ---> NEW EDIT PICKERS <---
   const pickEditPoster = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
-    if (!result.canceled) {
-      const asset = result.assets[0];
-      setEditPosterFile({ uri: asset.uri, name: asset.fileName ?? `edit_poster.jpg`, mimeType: asset.mimeType ?? 'image/jpeg', file: (asset as any).file });
-    }
+    if (!result.canceled) setEditPosterFile({ uri: result.assets[0].uri, name: result.assets[0].fileName ?? `edit_poster.jpg`, mimeType: result.assets[0].mimeType ?? 'image/jpeg', file: (result.assets[0] as any).file });
   };
-
   const pickEditBackdrop = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
-    if (!result.canceled) {
-      const asset = result.assets[0];
-      setEditBackdropFile({ uri: asset.uri, name: asset.fileName ?? `edit_backdrop.jpg`, mimeType: asset.mimeType ?? 'image/jpeg', file: (asset as any).file });
-    }
+    if (!result.canceled) setEditBackdropFile({ uri: result.assets[0].uri, name: result.assets[0].fileName ?? `edit_backdrop.jpg`, mimeType: result.assets[0].mimeType ?? 'image/jpeg', file: (result.assets[0] as any).file });
   };
-
   const pickEditVideo = async () => {
-    const confirmMessage = "Upload New Video? This will immediately replace the current video when saved.";
-    if (Platform.OS === 'web' ? !window.confirm(confirmMessage) : false) return;
-    
-    if (Platform.OS !== 'web') {
-      Alert.alert("Replace Video", confirmMessage, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Choose File", onPress: async () => {
-            const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: true });
-            if (!result.canceled) setEditVideoFile({ uri: result.assets[0].uri, name: result.assets[0].name, mimeType: result.assets[0].mimeType ?? 'video/mp4', file: result.assets[0].file });
-        }}
-      ]);
-      return;
-    }
-
+    const msg = "Upload New Video? This will replace the current video when saved.";
+    if (Platform.OS === 'web' ? !window.confirm(msg) : false) return;
     const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: true });
-    if (!result.canceled) {
-      const asset = result.assets[0];
-      setEditVideoFile({ uri: asset.uri, name: asset.name, mimeType: asset.mimeType ?? 'video/mp4', file: asset.file });
-    }
+    if (!result.canceled) setEditVideoFile({ uri: result.assets[0].uri, name: result.assets[0].name, mimeType: result.assets[0].mimeType ?? 'video/mp4', file: result.assets[0].file });
   };
-
   const pickSubtitle = async (isEpisode: boolean = false) => {
     const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
     if (!result.canceled) {
-      const asset = result.assets[0];
-      const fileData = { uri: asset.uri, name: asset.name, mimeType: 'text/vtt', file: asset.file };
-      if (isEpisode) setEpisodeSubtitleFile(fileData); else setSubtitleFile(fileData);
+      const fd = { uri: result.assets[0].uri, name: result.assets[0].name, mimeType: 'text/vtt', file: result.assets[0].file };
+      if (isEpisode) setEpisodeSubtitleFile(fd); else setSubtitleFile(fd);
     }
   };
 
   const uploadFile = async (fileObj: any, path: string, mimeType: string): Promise<string> => {
     let blob = fileObj.file;
     if (!blob) { const response = await fetch(fileObj.uri); blob = await response.blob(); }
-    const { data, error } = await supabase.storage.from('movies').upload(path, blob, { contentType: mimeType, upsert: true }); // Changed to upsert true for edits
+    const { data, error } = await supabase.storage.from('movies').upload(path, blob, { contentType: mimeType, upsert: true }); 
     if (error) throw error;
     return supabase.storage.from('movies').getPublicUrl(data.path).data.publicUrl;
   };
@@ -253,119 +236,68 @@ export default function AdminScreen() {
   const uploadVideoToMux = async (fileObj: any, taskId: string, subtitleUrl?: string | null, passthrough?: string): Promise<void> => {
     let blob = fileObj.file;
     if (!blob) { const response = await fetch(fileObj.uri); blob = await response.blob(); }
-    
     updateTask(taskId, { message: 'Connecting to Mux backend...' });
-
-    const backendRes = await fetch('https://1v1-app.pages.dev/api/mux', { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'v1-super-admin-2026' }, 
-        body: JSON.stringify({ subtitleUrl, passthrough }) 
-    });
-
-    if (!backendRes.ok) throw new Error(`Mux Connection Failed: ${await backendRes.text()}`);
+    const backendRes = await fetch('https://1v1-app.pages.dev/api/mux', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-secret': 'v1-super-admin-2026' }, body: JSON.stringify({ subtitleUrl, passthrough }) });
+    if (!backendRes.ok) throw new Error(`Mux Connection Failed`);
     const muxUpload = await backendRes.json();
-    if (!muxUpload.data?.url) throw new Error(`Mux Backend Error: No Upload URL provided`);
+    if (!muxUpload.data?.url) throw new Error(`No Upload URL provided`);
     
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', muxUpload.data.url);
-      xhr.upload.onprogress = (event) => { 
-          if (event.lengthComputable) {
-              const progress = Math.round((event.loaded / event.total) * 100);
-              updateTask(taskId, { progress, message: `Uploading Video: ${progress}%` }); 
-          }
-      };
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          updateTask(taskId, { status: 'done', progress: 100, message: 'Upload Complete! Content will appear soon.' });
-          resolve();
-        } else { reject(new Error(`Video Data Upload Failed (${xhr.status})`)); }
-      };
-      xhr.onerror = () => reject(new Error(`Network error during video transfer`));
+      xhr.upload.onprogress = (event) => { if (event.lengthComputable) { updateTask(taskId, { progress: Math.round((event.loaded / event.total) * 100), message: `Uploading Video: ${Math.round((event.loaded / event.total) * 100)}%` }); } };
+      xhr.onload = () => { if (xhr.status >= 200 && xhr.status < 300) { updateTask(taskId, { status: 'done', progress: 100, message: 'Upload Complete!' }); resolve(); } else { reject(new Error(`Failed (${xhr.status})`)); } };
+      xhr.onerror = () => reject(new Error(`Network error`));
       xhr.send(blob);
     });
   };
 
   const queueMovieUpload = () => {
-    if (!title || !category || !posterFile || !videoFile) {
-        if (Platform.OS === 'web') window.alert('Fill all required fields!'); else Alert.alert('Error', 'Fill all required fields!');
-        return;
-    }
+    if (!title || !category || !posterFile || !videoFile) { Alert.alert('Error', 'Fill all required fields!'); return; }
     const taskId = Date.now().toString();
-    const cT = title; const cD = description; const cC = category; const cP = posterFile; const cB = backdropFile; const cV = videoFile; const cS = subtitleFile;
-    
-    setUploadTasks(prev => [{ 
-      id: taskId, title: title, type: 'Movie', progress: 0, status: 'uploading', message: 'Starting...',
-      retryPayload: { cT, cD, cC, cP, cB, cV, cS } 
-    }, ...prev]);
-    
+    const p = { cT: title, cD: description, cC: category, cP: posterFile, cB: backdropFile, cV: videoFile, cS: subtitleFile };
+    setUploadTasks(prev => [{ id: taskId, title: title, type: 'Movie', progress: 0, status: 'uploading', message: 'Starting...', retryPayload: p }, ...prev]);
     setTitle(''); setDescription(''); setCategory(null); setPosterFile(null); setBackdropFile(null); setVideoFile(null); setSubtitleFile(null);
-    runMovieBackground(taskId, cT, cD, cC, cP, cB, cV, cS);
+    runMovieBackground(taskId, p.cT, p.cD, p.cC, p.cP, p.cB, p.cV, p.cS);
   };
 
   const runMovieBackground = async (taskId: string, title: string, desc: string, cat: string, poster: any, backdrop: any, video: any, subtitle: any) => {
     try {
-      const timestamp = Date.now();
-      const safeSlug = title.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
-      
-      updateTask(taskId, { message: 'Uploading Images & Subtitles...' });
-      let subUrl = null;
-      if (subtitle) subUrl = await uploadFile(subtitle, `subtitles/${timestamp}-${safeSlug}.vtt`, 'text/vtt');
+      const timestamp = Date.now(); const safeSlug = title.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
+      updateTask(taskId, { message: 'Uploading Images...' });
+      let subUrl = subtitle ? await uploadFile(subtitle, `subtitles/${timestamp}-${safeSlug}.vtt`, 'text/vtt') : null;
       const posterUrl = await uploadFile(poster, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
-      
-      let backdropUrl = null;
-      if (backdrop) backdropUrl = await uploadFile(backdrop, `backdrops/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
+      let backdropUrl = backdrop ? await uploadFile(backdrop, `backdrops/${timestamp}-${safeSlug}.jpg`, 'image/jpeg') : null;
 
       updateTask(taskId, { message: 'Creating Database Entry...' });
-      const { data, error } = await supabase
-        .from('movies')
-        .insert({ 
-            title, 
-            description: desc || null, 
-            poster_url: posterUrl, 
-            backdrop_url: backdropUrl,
-            type: 'Movie', 
-            category: cat, 
-            status: 'processing' 
-        })
-        .select('id')
-        .single();
+      // ---> ADDED AUDIT TRAIL: uploaded_by <---
+      const { data, error } = await supabase.from('movies').insert({ 
+            title, description: desc || null, poster_url: posterUrl, backdrop_url: backdropUrl, type: 'Movie', category: cat, status: 'processing', uploaded_by: userId 
+        }).select('id').single();
         
       if (error) throw new Error(`Database Error: ${error.message}`);
       await uploadVideoToMux(video, taskId, subUrl, `movies:${data.id}`);
-    } catch (e: any) { 
-        updateTask(taskId, { status: 'error', message: e.message || 'Unknown Error' }); 
-    }
+    } catch (e: any) { updateTask(taskId, { status: 'error', message: e.message || 'Unknown Error' }); }
   };
 
   const queueEpisodeUpload = () => {
     if (!selectedSeriesId || !seasonNumber || !episodeNumber || !episodeTitle || !episodeVideoFile) return;
     const taskId = Date.now().toString();
-    const cSId = selectedSeriesId; const cS = parseInt(seasonNumber); const cE = parseInt(episodeNumber); const cT = episodeTitle; const cV = episodeVideoFile; const cSub = episodeSubtitleFile;
-    
-    setUploadTasks(prev => [{ 
-      id: taskId, title: `S${seasonNumber}E${episodeNumber}: ${episodeTitle}`, type: 'Episode', progress: 0, status: 'uploading', message: 'Starting...',
-      retryPayload: { cSId, cS, cE, cT, cV, cSub }
-    }, ...prev]);
-    
+    const p = { cSId: selectedSeriesId, cS: parseInt(seasonNumber), cE: parseInt(episodeNumber), cT: episodeTitle, cV: episodeVideoFile, cSub: episodeSubtitleFile };
+    setUploadTasks(prev => [{ id: taskId, title: `S${seasonNumber}E${episodeNumber}: ${episodeTitle}`, type: 'Episode', progress: 0, status: 'uploading', message: 'Starting...', retryPayload: p }, ...prev]);
     setEpisodeTitle(''); setEpisodeNumber(''); setEpisodeVideoFile(null); setEpisodeSubtitleFile(null);
-    runEpisodeBackground(taskId, cSId, cS, cE, cT, cV, cSub);
+    runEpisodeBackground(taskId, p.cSId, p.cS, p.cE, p.cT, p.cV, p.cSub);
   };
 
   const runEpisodeBackground = async (taskId: string, seriesId: string, seasonNum: number, episodeNum: number, epTitle: string, video: any, subtitle: any) => {
     try {
-      const timestamp = Date.now();
-      const safeSlug = epTitle.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
-      
-      updateTask(taskId, { message: 'Uploading Episode Subtitles...' });
-      let subUrl = null;
-      if (subtitle) subUrl = await uploadFile(subtitle, `subtitles/${timestamp}-${safeSlug}.vtt`, 'text/vtt');
+      const timestamp = Date.now(); const safeSlug = epTitle.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
+      updateTask(taskId, { message: 'Uploading Subtitles...' });
+      let subUrl = subtitle ? await uploadFile(subtitle, `subtitles/${timestamp}-${safeSlug}.vtt`, 'text/vtt') : null;
 
-      updateTask(taskId, { message: 'Registering Episode in Database...' });
-      const { data, error } = await supabase.from('episodes')
-        .insert({ movie_id: seriesId, season_number: seasonNum, episode_number: episodeNum, title: epTitle, status: 'processing' })
-        .select('id').single();
-        
+      updateTask(taskId, { message: 'Registering Episode...' });
+      // ---> ADDED AUDIT TRAIL: uploaded_by <---
+      const { data, error } = await supabase.from('episodes').insert({ movie_id: seriesId, season_number: seasonNum, episode_number: episodeNum, title: epTitle, status: 'processing', uploaded_by: userId }).select('id').single();
       if (error) throw new Error(`Database Error: ${error.message}`);
       await uploadVideoToMux(video, taskId, subUrl, `episodes:${data.id}`);
     } catch (e: any) { updateTask(taskId, { status: 'error', message: e.message || 'Unknown Error' }); }
@@ -373,144 +305,67 @@ export default function AdminScreen() {
 
   const handleRetryTask = (task: UploadTask) => {
     updateTask(task.id, { status: 'uploading', progress: 0, message: 'Retrying...' });
-    if (task.type === 'Movie' && task.retryPayload) {
-      const p = task.retryPayload;
-      runMovieBackground(task.id, p.cT, p.cD, p.cC, p.cP, p.cB, p.cV, p.cS);
-    } else if (task.type === 'Episode' && task.retryPayload) {
-      const p = task.retryPayload;
-      runEpisodeBackground(task.id, p.cSId, p.cS, p.cE, p.cT, p.cV, p.cSub);
-    }
+    if (task.type === 'Movie') runMovieBackground(task.id, task.retryPayload.cT, task.retryPayload.cD, task.retryPayload.cC, task.retryPayload.cP, task.retryPayload.cB, task.retryPayload.cV, task.retryPayload.cS);
+    else if (task.type === 'Episode') runEpisodeBackground(task.id, task.retryPayload.cSId, task.retryPayload.cS, task.retryPayload.cE, task.retryPayload.cT, task.retryPayload.cV, task.retryPayload.cSub);
   };
 
   const handleCreateTVSeries = async () => {
     if (!title || !category || !posterFile) return;
     setTvSeriesUploading(true);
     try {
-      const timestamp = Date.now();
-      const safeSlug = title.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
+      const timestamp = Date.now(); const safeSlug = title.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
       const posterUrl = await uploadFile(posterFile, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
-      
-      let backdropUrl = null;
-      if (backdropFile) backdropUrl = await uploadFile(backdropFile, `backdrops/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
-
-      const { error } = await supabase.from('movies').insert({ 
-          title, description: description || null, poster_url: posterUrl, backdrop_url: backdropUrl, type: 'TV Series', category, status: 'active' 
-      });
+      let backdropUrl = backdropFile ? await uploadFile(backdropFile, `backdrops/${timestamp}-${safeSlug}.jpg`, 'image/jpeg') : null;
+      // ---> ADDED AUDIT TRAIL <---
+      const { error } = await supabase.from('movies').insert({ title, description: description || null, poster_url: posterUrl, backdrop_url: backdropUrl, type: 'TV Series', category, status: 'active', uploaded_by: userId });
       if (error) throw error;
-      setTitle(''); setDescription(''); setCategory(null); setPosterFile(null); setBackdropFile(null);
-      fetchTvSeries();
-      if (Platform.OS === 'web') window.alert("Series created!");
-    } catch(e: any) { 
-        if (Platform.OS === 'web') window.alert("Error: " + e.message); else Alert.alert("Error", e.message);
-    } finally { setTvSeriesUploading(false); }
+      setTitle(''); setDescription(''); setCategory(null); setPosterFile(null); setBackdropFile(null); fetchTvSeries();
+      Alert.alert("Success", "Series created!");
+    } catch(e: any) { Alert.alert("Error", e.message); } finally { setTvSeriesUploading(false); }
   };
 
-  const fetchTvSeries = useCallback(async () => {
-    setLoadingSeries(true);
-    const { data } = await supabase.from('movies').select('id, title').eq('type', 'TV Series').eq('status', 'active').order('title');
-    setTvSeries(data ?? []);
-    setLoadingSeries(false);
-  }, []);
-
-  const fetchAllMovies = useCallback(async () => {
-    setManageLoading(true);
-    const { data: moviesData } = await supabase.from('movies').select('*').order('title');
-    setManageMovies(moviesData ?? []);
-    const { data: episodesData } = await supabase.from('episodes').select('*, movies(title)').eq('status', 'trash').order('season_number');
-    setTrashedEpisodes(episodesData ?? []);
-    setManageLoading(false);
-  }, []);
+  const fetchTvSeries = useCallback(async () => { setLoadingSeries(true); const { data } = await supabase.from('movies').select('id, title').eq('type', 'TV Series').eq('status', 'active').order('title'); setTvSeries(data ?? []); setLoadingSeries(false); }, []);
+  const fetchAllMovies = useCallback(async () => { setManageLoading(true); const { data: mData } = await supabase.from('movies').select('*').order('title'); setManageMovies(mData ?? []); const { data: eData } = await supabase.from('episodes').select('*, movies(title)').eq('status', 'trash').order('season_number'); setTrashedEpisodes(eData ?? []); setManageLoading(false); }, []);
 
   useEffect(() => { if (uploadMode === 'episode') fetchTvSeries(); }, [uploadMode, fetchTvSeries]);
   useEffect(() => { if (activeSection === 'manage' || activeSection === 'trash') fetchAllMovies(); }, [activeSection, fetchAllMovies]);
 
   const startEditing = async (movie: any) => {
-    setEditingMovie(movie);
-    setEditTitle(movie.title);
-    setEditDescription(movie.description || '');
-    setEditCategory(movie.category || '');
-    setEditPosterUrl(movie.poster_url || '');
-    setEditBackdropUrl(movie.backdrop_url || '');
-    setEditVideoUrl(movie.video_url || '');
-    
-    // Reset file pickers
-    setEditPosterFile(null);
-    setEditBackdropFile(null);
-    setEditVideoFile(null);
-
-    if (movie.type === 'TV Series') {
-      setLoadingEpisodes(true);
-      const { data } = await supabase.from('episodes').select('*').eq('movie_id', movie.id).neq('status', 'trash').order('season_number').order('episode_number');
-      setEditEpisodes(data || []);
-      setLoadingEpisodes(false);
-    }
+    setEditingMovie(movie); setEditTitle(movie.title); setEditDescription(movie.description || ''); setEditCategory(movie.category || ''); setEditPosterUrl(movie.poster_url || ''); setEditBackdropUrl(movie.backdrop_url || ''); setEditVideoUrl(movie.video_url || '');
+    setEditPosterFile(null); setEditBackdropFile(null); setEditVideoFile(null);
+    if (movie.type === 'TV Series') { setLoadingEpisodes(true); const { data } = await supabase.from('episodes').select('*').eq('movie_id', movie.id).neq('status', 'trash').order('season_number').order('episode_number'); setEditEpisodes(data || []); setLoadingEpisodes(false); }
   };
 
   const handleMasterUpdate = async () => {
     if (!editingMovie) return;
     setEditSaving(true);
     try {
-      let finalPosterUrl = editPosterUrl;
-      let finalBackdropUrl = editBackdropUrl;
-      const timestamp = Date.now();
-      const safeSlug = editTitle.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
+      let finalPosterUrl = editPosterUrl; let finalBackdropUrl = editBackdropUrl;
+      const timestamp = Date.now(); const safeSlug = editTitle.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
+      if (editPosterFile) finalPosterUrl = await uploadFile(editPosterFile, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
+      if (editBackdropFile) finalBackdropUrl = await uploadFile(editBackdropFile, `backdrops/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
 
-      // Upload new poster if selected
-      if (editPosterFile) {
-        finalPosterUrl = await uploadFile(editPosterFile, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
-      }
-      
-      // Upload new backdrop if selected
-      if (editBackdropFile) {
-        finalBackdropUrl = await uploadFile(editBackdropFile, `backdrops/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
-      }
-
-      const { error: movieError } = await supabase.from('movies').update({ 
-          title: editTitle, 
-          description: editDescription, 
-          category: editCategory, 
-          poster_url: finalPosterUrl, 
-          backdrop_url: finalBackdropUrl 
-          // Note: Video URL is deliberately left alone here. Video replacement requires Mux re-processing.
-        }).eq('id', editingMovie.id);
-      
+      const { error: movieError } = await supabase.from('movies').update({ title: editTitle, description: editDescription, category: editCategory, poster_url: finalPosterUrl, backdrop_url: finalBackdropUrl }).eq('id', editingMovie.id);
       if (movieError) throw movieError;
 
-      // Handle massive video replacement via Mux
       if (editVideoFile && editingMovie.type === 'Movie') {
         const taskId = `edit-${Date.now().toString()}`;
         setUploadTasks(prev => [{ id: taskId, title: `Update Video: ${editTitle}`, type: 'Movie', progress: 0, status: 'uploading', message: 'Starting video replacement...' }, ...prev]);
-        
-        // Push the video to Mux background task
-        uploadVideoToMux(editVideoFile, taskId, null, `movies:${editingMovie.id}`).catch(e => {
-            updateTask(taskId, { status: 'error', message: e.message });
-        });
+        uploadVideoToMux(editVideoFile, taskId, null, `movies:${editingMovie.id}`).catch(e => updateTask(taskId, { status: 'error', message: e.message }));
       }
 
       if (editingMovie.type === 'TV Series' && editEpisodes.length > 0) {
         const episodeUpdates = editEpisodes.map(ep => supabase.from('episodes').update({ title: ep.title, season_number: parseInt(ep.season_number), episode_number: parseInt(ep.episode_number) }).eq('id', ep.id));
         const results = await Promise.all(episodeUpdates);
-        const firstError = results.find(r => r.error);
-        if (firstError) throw firstError.error;
+        if (results.find(r => r.error)) throw results.find(r => r.error)?.error;
       }
-
-      if (Platform.OS === 'web') window.alert("Success: Content updated!"); else Alert.alert("Success", "Content updated!");
-      setEditingMovie(null);
-      fetchAllMovies();
-    } catch (error: any) {
-      if (Platform.OS === 'web') window.alert("Update Failed: " + error.message); else Alert.alert("Error", error.message);
-    } finally { setEditSaving(false); }
+      Alert.alert("Success", "Content updated!"); setEditingMovie(null); fetchAllMovies();
+    } catch (error: any) { Alert.alert("Error", error.message); } finally { setEditSaving(false); }
   };
 
   const updateLocalEpisode = (id: string, field: string, value: string) => { setEditEpisodes(prev => prev.map(ep => ep.id === id ? { ...ep, [field]: value } : ep)); };
-
   const handleDeleteEpisode = async (epId: string) => {
-    if (Platform.OS === 'web' ? window.confirm("Move episode to trash?") : true) {
-      const { error } = await supabase.from('episodes').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', epId);
-      if (error) return; 
-      setEditEpisodes(prev => prev.filter(e => e.id !== epId));
-      fetchAllMovies();
-    }
+    if (Platform.OS === 'web' ? window.confirm("Move to trash?") : true) { await supabase.from('episodes').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', epId); setEditEpisodes(prev => prev.filter(e => e.id !== epId)); fetchAllMovies(); }
   };
 
   const toggleManageSelection = (id: string) => { setSelectedManageIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]); };
@@ -518,26 +373,13 @@ export default function AdminScreen() {
 
   const handleBulkTrash = async () => { await supabase.from('movies').update({ status: 'trash', deleted_at: new Date().toISOString() }).in('id', selectedManageIds); setSelectedManageIds([]); fetchAllMovies(); };
   const handleBulkRestore = async () => { await supabase.from('movies').update({ status: 'active', deleted_at: null }).in('id', selectedTrashIds); setSelectedTrashIds([]); fetchAllMovies(); };
-  const handleBulkDeleteForever = async () => {
-    if (Platform.OS === 'web' ? window.confirm("Delete forever?") : true) {
-      await supabase.from('movies').delete().in('id', selectedTrashIds); setSelectedTrashIds([]); fetchAllMovies();
-    }
-  };
+  const handleBulkDeleteForever = async () => { if (Platform.OS === 'web' ? window.confirm("Delete forever?") : true) { await supabase.from('movies').delete().in('id', selectedTrashIds); setSelectedTrashIds([]); fetchAllMovies(); } };
 
   const handleTrashMovie = async (id: string) => { setUpdatingId(id); await supabase.from('movies').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', id); fetchAllMovies(); setUpdatingId(null); };
   const handleRestoreMovie = async (id: string) => { setUpdatingId(id); await supabase.from('movies').update({ status: 'active', deleted_at: null }).eq('id', id); fetchAllMovies(); setUpdatingId(null); };
-  const handleDeleteForeverMovie = async (id: string) => {
-    if (Platform.OS === 'web' ? window.confirm("Delete forever?") : true) {
-      setDeletingId(id); await supabase.from('movies').delete().eq('id', id); fetchAllMovies(); setDeletingId(null);
-    }
-  };
-
+  const handleDeleteForeverMovie = async (id: string) => { if (Platform.OS === 'web' ? window.confirm("Delete forever?") : true) { setDeletingId(id); await supabase.from('movies').delete().eq('id', id); fetchAllMovies(); setDeletingId(null); } };
   const handleRestoreEpisode = async (id: string) => { setUpdatingId(id); await supabase.from('episodes').update({ status: 'active', deleted_at: null }).eq('id', id); fetchAllMovies(); setUpdatingId(null); };
-  const handleDeleteForeverEpisode = async (id: string) => {
-    if (Platform.OS === 'web' ? window.confirm("Delete episode forever?") : true) {
-      setDeletingId(id); await supabase.from('episodes').delete().eq('id', id); fetchAllMovies(); setDeletingId(null);
-    }
-  };
+  const handleDeleteForeverEpisode = async (id: string) => { if (Platform.OS === 'web' ? window.confirm("Delete forever?") : true) { setDeletingId(id); await supabase.from('episodes').delete().eq('id', id); fetchAllMovies(); setDeletingId(null); } };
 
   const activeMovies = manageMovies.filter((m) => m.status !== 'trash');
   const trashedMovies = manageMovies.filter((m) => m.status === 'trash');
@@ -549,61 +391,62 @@ export default function AdminScreen() {
     <View style={styles.container}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         
+        {/* ---> RBAC DYNAMIC TAB BAR <--- */}
         <View style={styles.tabRow}>
-          <Pressable style={[styles.tabButton, activeSection === 'dashboard' && styles.tabButtonActive]} onPress={() => { setActiveSection('dashboard'); setEditingMovie(null); }}><Text style={[styles.tabButtonLabel, activeSection === 'dashboard' && styles.tabButtonLabelActive]}>Dashboard</Text></Pressable>
+          {userRole === 'super_admin' && (
+            <Pressable style={[styles.tabButton, activeSection === 'dashboard' && styles.tabButtonActive]} onPress={() => { setActiveSection('dashboard'); setEditingMovie(null); }}><Text style={[styles.tabButtonLabel, activeSection === 'dashboard' && styles.tabButtonLabelActive]}>Dashboard</Text></Pressable>
+          )}
           <Pressable style={[styles.tabButton, activeSection === 'upload' && styles.tabButtonActive]} onPress={() => { setActiveSection('upload'); setEditingMovie(null); }}><Text style={[styles.tabButtonLabel, activeSection === 'upload' && styles.tabButtonLabelActive]}>Upload</Text></Pressable>
           <Pressable style={[styles.tabButton, activeSection === 'manage' && styles.tabButtonActive]} onPress={() => setActiveSection('manage')}><Text style={[styles.tabButtonLabel, activeSection === 'manage' && styles.tabButtonLabelActive]}>Manage</Text></Pressable>
-          <Pressable style={[styles.tabButton, activeSection === 'trash' && styles.tabButtonActive]} onPress={() => { setActiveSection('trash'); setEditingMovie(null); }}><Text style={[styles.tabButtonLabel, activeSection === 'trash' && styles.tabButtonLabelActive]}>Trash</Text></Pressable>
+          
+          {userRole === 'super_admin' && (
+            <>
+              <Pressable style={[styles.tabButton, activeSection === 'trash' && styles.tabButtonActive]} onPress={() => { setActiveSection('trash'); setEditingMovie(null); }}><Text style={[styles.tabButtonLabel, activeSection === 'trash' && styles.tabButtonLabelActive]}>Trash</Text></Pressable>
+              <Pressable style={[styles.tabButton, activeSection === 'team' && styles.tabButtonActive]} onPress={() => { setActiveSection('team'); setEditingMovie(null); }}><Text style={[styles.tabButtonLabel, activeSection === 'team' && styles.tabButtonLabelActive]}>Team</Text></Pressable>
+            </>
+          )}
         </View>
 
-        {activeSection === 'dashboard' && (
-          <View style={styles.dashboardContainer}>
-            <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20}}>
-              <Text style={styles.dashboardTitle}>Platform Analytics</Text>
-              <Pressable onPress={fetchDashboardStats}>
-                {statsLoading ? <ActivityIndicator color="#e50914" /> : <Ionicons name="refresh" size={24} color="#888" />}
-              </Pressable>
-            </View>
-
-            <Text style={{color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 15}}>Audience</Text>
-            <View style={styles.statsGrid}>
-              <View style={[styles.statCard, { width: '23%', borderColor: '#6b7280' }]}><Ionicons name="people" size={24} color="#6b7280" style={styles.statIcon} /><Text style={styles.statValue}>{platformStats.totalUsers.toLocaleString()}</Text><Text style={styles.statLabel}>Total Users</Text></View>
-              <View style={[styles.statCard, { width: '23%', borderColor: '#10b981' }]}><Text style={styles.statValue}>{platformStats.dau.toLocaleString()}</Text><Text style={styles.statLabel}>Daily (DAU)</Text></View>
-              <View style={[styles.statCard, { width: '23%', borderColor: '#3b82f6' }]}><Text style={styles.statValue}>{platformStats.wau.toLocaleString()}</Text><Text style={styles.statLabel}>Weekly (WAU)</Text></View>
-              <View style={[styles.statCard, { width: '23%', borderColor: '#8b5cf6' }]}><Text style={styles.statValue}>{platformStats.mau.toLocaleString()}</Text><Text style={styles.statLabel}>Monthly (MAU)</Text></View>
-            </View>
-
-            <Text style={{color: '#fff', fontSize: 18, fontWeight: 'bold', marginTop: 20, marginBottom: 15}}>Content</Text>
-            <View style={styles.statsGrid}>
-              <View style={[styles.statCard, { width: '23%' }]}><Ionicons name="eye" size={24} color="#e50914" style={styles.statIcon} /><Text style={styles.statValue}>{platformStats.totalViews.toLocaleString()}</Text><Text style={styles.statLabel}>Total Views</Text></View>
-              <View style={[styles.statCard, { width: '23%' }]}><Ionicons name="film" size={24} color="#e50914" style={styles.statIcon} /><Text style={styles.statValue}>{platformStats.totalMovies}</Text><Text style={styles.statLabel}>Movies</Text></View>
-              <View style={[styles.statCard, { width: '23%' }]}><Ionicons name="tv" size={24} color="#e50914" style={styles.statIcon} /><Text style={styles.statValue}>{platformStats.totalSeries}</Text><Text style={styles.statLabel}>TV Series</Text></View>
-              <View style={[styles.statCard, { width: '23%' }]}><Ionicons name="trophy" size={24} color="#f59e0b" style={styles.statIcon} /><Text style={[styles.statValue, {fontSize: 16}]} numberOfLines={1}>{platformStats.topCategory}</Text><Text style={styles.statLabel}>Top Category</Text></View>
-
-              <View style={[styles.statCard, { width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 25, marginTop: 5, borderColor: '#eab308' }]}>
-                 <View style={{ flex: 1, paddingRight: 10 }}>
-                   <Text style={[styles.statValue, {fontSize: 22, color: '#eab308'}]} numberOfLines={1}>{platformStats.topTitle}</Text>
-                   <Text style={styles.statLabel}>Most Watched Title</Text>
-                 </View>
-                 <Ionicons name="star" size={36} color="#eab308" />
-              </View>
-            </View>
-            
-            <View style={styles.leaderboardSection}>
-              <View style={{flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 15}}><Ionicons name="list" size={22} color="#fff" /><Text style={styles.leaderboardSectionTitle}>Content Leaderboard</Text></View>
-              {platformStats.leaderboard.length === 0 ? (
-                 <Text style={{color: '#666'}}>No content available yet.</Text>
-              ) : (
-                 platformStats.leaderboard.map((item, index) => (
-                   <View key={item.id} style={styles.leaderboardRow}>
-                     <Text style={styles.rankText}>#{index + 1}</Text>
-                     <View style={{flex: 1}}><Text style={styles.leaderboardTitle}>{item.title}</Text><Text style={styles.leaderboardCategory}>{item.category || 'Other'} • {item.type || 'Movie'}</Text></View>
-                     <View style={{alignItems: 'flex-end'}}><Text style={styles.leaderboardViews}>{item.views || 0}</Text><Text style={{color: '#666', fontSize: 10}}>views</Text></View>
-                   </View>
-                 ))
-              )}
-            </View>
-          </View>
+        {activeSection === 'dashboard' && userRole === 'super_admin' && (
+           <View style={styles.dashboardContainer}>
+             <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20}}>
+               <Text style={styles.dashboardTitle}>Platform Analytics</Text>
+               <Pressable onPress={fetchDashboardStats}>
+                 {statsLoading ? <ActivityIndicator color="#e50914" /> : <Ionicons name="refresh" size={24} color="#888" />}
+               </Pressable>
+             </View>
+             {/* Audience Stats */}
+             <Text style={{color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 15}}>Audience</Text>
+             <View style={styles.statsGrid}>
+               <View style={[styles.statCard, { width: '23%', borderColor: '#6b7280' }]}><Ionicons name="people" size={24} color="#6b7280" style={styles.statIcon} /><Text style={styles.statValue}>{platformStats.totalUsers.toLocaleString()}</Text><Text style={styles.statLabel}>Total Users</Text></View>
+               <View style={[styles.statCard, { width: '23%', borderColor: '#10b981' }]}><Text style={styles.statValue}>{platformStats.dau.toLocaleString()}</Text><Text style={styles.statLabel}>Daily (DAU)</Text></View>
+               <View style={[styles.statCard, { width: '23%', borderColor: '#3b82f6' }]}><Text style={styles.statValue}>{platformStats.wau.toLocaleString()}</Text><Text style={styles.statLabel}>Weekly (WAU)</Text></View>
+               <View style={[styles.statCard, { width: '23%', borderColor: '#8b5cf6' }]}><Text style={styles.statValue}>{platformStats.mau.toLocaleString()}</Text><Text style={styles.statLabel}>Monthly (MAU)</Text></View>
+             </View>
+             {/* Content Stats */}
+             <Text style={{color: '#fff', fontSize: 18, fontWeight: 'bold', marginTop: 20, marginBottom: 15}}>Content</Text>
+             <View style={styles.statsGrid}>
+               <View style={[styles.statCard, { width: '23%' }]}><Ionicons name="eye" size={24} color="#e50914" style={styles.statIcon} /><Text style={styles.statValue}>{platformStats.totalViews.toLocaleString()}</Text><Text style={styles.statLabel}>Total Views</Text></View>
+               <View style={[styles.statCard, { width: '23%' }]}><Ionicons name="film" size={24} color="#e50914" style={styles.statIcon} /><Text style={styles.statValue}>{platformStats.totalMovies}</Text><Text style={styles.statLabel}>Movies</Text></View>
+               <View style={[styles.statCard, { width: '23%' }]}><Ionicons name="tv" size={24} color="#e50914" style={styles.statIcon} /><Text style={styles.statValue}>{platformStats.totalSeries}</Text><Text style={styles.statLabel}>TV Series</Text></View>
+               <View style={[styles.statCard, { width: '23%' }]}><Ionicons name="trophy" size={24} color="#f59e0b" style={styles.statIcon} /><Text style={[styles.statValue, {fontSize: 16}]} numberOfLines={1}>{platformStats.topCategory}</Text><Text style={styles.statLabel}>Top Category</Text></View>
+               <View style={[styles.statCard, { width: '100%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 25, marginTop: 5, borderColor: '#eab308' }]}>
+                  <View style={{ flex: 1, paddingRight: 10 }}><Text style={[styles.statValue, {fontSize: 22, color: '#eab308'}]} numberOfLines={1}>{platformStats.topTitle}</Text><Text style={styles.statLabel}>Most Watched Title</Text></View>
+                  <Ionicons name="star" size={36} color="#eab308" />
+               </View>
+             </View>
+             {/* Leaderboard */}
+             <View style={styles.leaderboardSection}>
+               <View style={{flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 15}}><Ionicons name="list" size={22} color="#fff" /><Text style={styles.leaderboardSectionTitle}>Content Leaderboard</Text></View>
+               {platformStats.leaderboard.length === 0 ? <Text style={{color: '#666'}}>No content available.</Text> : platformStats.leaderboard.map((item, index) => (
+                  <View key={item.id} style={styles.leaderboardRow}>
+                    <Text style={styles.rankText}>#{index + 1}</Text>
+                    <View style={{flex: 1}}><Text style={styles.leaderboardTitle}>{item.title}</Text><Text style={styles.leaderboardCategory}>{item.category || 'Other'} • {item.type || 'Movie'}</Text></View>
+                    <View style={{alignItems: 'flex-end'}}><Text style={styles.leaderboardViews}>{item.views || 0}</Text><Text style={{color: '#666', fontSize: 10}}>views</Text></View>
+                  </View>
+               ))}
+             </View>
+           </View>
         )}
 
         {/* --- UPLOAD SECTION --- */}
@@ -624,24 +467,13 @@ export default function AdminScreen() {
                 <Text style={styles.label}>Category *</Text>
                 <View style={styles.optionRow}>{['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi'].map(opt => (<Pressable key={opt} style={[styles.optionChip, category === opt && styles.optionChipSelected]} onPress={() => setCategory(opt as any)}><Text style={styles.optionChipText}>{opt}</Text></Pressable>))}</View>
                 
-                {/* DUAL IMAGE UPLOAD ROW */}
                 <View style={styles.fileRow}>
-                  <Pressable style={styles.selectButtonSmall} onPress={pickPoster}>
-                    <Ionicons name="image" size={20} color="#fff" />
-                    <Text style={styles.selectButtonText} numberOfLines={1}>{posterFile ? posterFile.name : 'Poster (Vertical) *'}</Text>
-                  </Pressable>
-                  <Pressable style={styles.selectButtonSmall} onPress={pickBackdrop}>
-                    <Ionicons name="image-outline" size={20} color="#fff" />
-                    <Text style={styles.selectButtonText} numberOfLines={1}>{backdropFile ? backdropFile.name : 'Backdrop (Horizontal)'}</Text>
-                  </Pressable>
+                  <Pressable style={styles.selectButtonSmall} onPress={pickPoster}><Ionicons name="image" size={20} color="#fff" /><Text style={styles.selectButtonText} numberOfLines={1}>{posterFile ? posterFile.name : 'Poster (Vertical) *'}</Text></Pressable>
+                  <Pressable style={styles.selectButtonSmall} onPress={pickBackdrop}><Ionicons name="image-outline" size={20} color="#fff" /><Text style={styles.selectButtonText} numberOfLines={1}>{backdropFile ? backdropFile.name : 'Backdrop (Horizontal)'}</Text></Pressable>
                 </View>
 
-                <Pressable style={[styles.selectButton, { borderColor: videoFile ? '#22c55e' : '#2a2a2a' }]} onPress={() => pickVideo(false)}>
-                  <Ionicons name="videocam" size={20} color={videoFile ? '#22c55e' : '#fff'} />
-                  <Text style={styles.selectButtonText}>{videoFile ? videoFile.name : 'Video File *'}</Text>
-                </Pressable>
+                <Pressable style={[styles.selectButton, { borderColor: videoFile ? '#22c55e' : '#2a2a2a' }]} onPress={() => pickVideo(false)}><Ionicons name="videocam" size={20} color={videoFile ? '#22c55e' : '#fff'} /><Text style={styles.selectButtonText}>{videoFile ? videoFile.name : 'Video File *'}</Text></Pressable>
                 <Pressable style={[styles.selectButton, { borderColor: subtitleFile ? '#22c55e' : '#2a2a2a', marginBottom: 15 }]} onPress={() => pickSubtitle(false)}><Ionicons name="text" size={20} color={subtitleFile ? '#22c55e' : '#fff'} /><Text style={styles.selectButtonText}>{subtitleFile ? subtitleFile.name : 'Optional: Attach Subtitles (.vtt / .srt)'}</Text></Pressable>
-                
                 <Pressable style={styles.uploadButton} onPress={queueMovieUpload}><Ionicons name="cloud-upload" size={20} color="#fff" /><Text style={styles.uploadButtonText}>Queue Upload</Text></Pressable>
               </>
             )}
@@ -655,16 +487,9 @@ export default function AdminScreen() {
                 <Text style={styles.label}>Category *</Text>
                 <View style={styles.optionRow}>{['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi'].map(opt => (<Pressable key={opt} style={[styles.optionChip, category === opt && styles.optionChipSelected]} onPress={() => setCategory(opt as any)}><Text style={styles.optionChipText}>{opt}</Text></Pressable>))}</View>
                 
-                {/* DUAL IMAGE UPLOAD ROW */}
                 <View style={styles.fileRow}>
-                  <Pressable style={styles.selectButtonSmall} onPress={pickPoster}>
-                    <Ionicons name="image" size={20} color="#fff" />
-                    <Text style={styles.selectButtonText} numberOfLines={1}>{posterFile ? posterFile.name : 'Poster (Vertical) *'}</Text>
-                  </Pressable>
-                  <Pressable style={styles.selectButtonSmall} onPress={pickBackdrop}>
-                    <Ionicons name="image-outline" size={20} color="#fff" />
-                    <Text style={styles.selectButtonText} numberOfLines={1}>{backdropFile ? backdropFile.name : 'Backdrop (Horizontal)'}</Text>
-                  </Pressable>
+                  <Pressable style={styles.selectButtonSmall} onPress={pickPoster}><Ionicons name="image" size={20} color="#fff" /><Text style={styles.selectButtonText} numberOfLines={1}>{posterFile ? posterFile.name : 'Poster (Vertical) *'}</Text></Pressable>
+                  <Pressable style={styles.selectButtonSmall} onPress={pickBackdrop}><Ionicons name="image-outline" size={20} color="#fff" /><Text style={styles.selectButtonText} numberOfLines={1}>{backdropFile ? backdropFile.name : 'Backdrop (Horizontal)'}</Text></Pressable>
                 </View>
 
                 <Pressable style={styles.uploadButton} onPress={handleCreateTVSeries}>
@@ -678,11 +503,7 @@ export default function AdminScreen() {
                 <Text style={styles.label}>Select TV Series *</Text>
                 {loadingSeries ? <ActivityIndicator color="#e50914" /> : (
                   <ScrollView style={styles.episodeSeriesList} nestedScrollEnabled>
-                    {tvSeries.map(s => (
-                      <Pressable key={s.id} style={[styles.seriesItem, selectedSeriesId === s.id && styles.seriesItemSelected]} onPress={() => setSelectedSeriesId(s.id)}>
-                        <Text style={styles.seriesItemText}>{s.title}</Text>
-                      </Pressable>
-                    ))}
+                    {tvSeries.map(s => (<Pressable key={s.id} style={[styles.seriesItem, selectedSeriesId === s.id && styles.seriesItemSelected]} onPress={() => setSelectedSeriesId(s.id)}><Text style={styles.seriesItemText}>{s.title}</Text></Pressable>))}
                   </ScrollView>
                 )}
                 <View style={{flexDirection: 'row', gap: 10}}>
@@ -691,12 +512,7 @@ export default function AdminScreen() {
                 </View>
                 <Text style={styles.label}>Episode Title *</Text>
                 <TextInput style={styles.input} value={episodeTitle} onChangeText={setEpisodeTitle} />
-                
-                <Pressable style={[styles.selectButton, { borderColor: episodeVideoFile ? '#22c55e' : '#2a2a2a' }]} onPress={() => pickVideo(true)}>
-                  <Ionicons name="videocam" size={20} color={episodeVideoFile ? '#22c55e' : '#fff'} />
-                  <Text style={styles.selectButtonText} numberOfLines={1}>{episodeVideoFile ? episodeVideoFile.name : 'Video *'}</Text>
-                </Pressable>
-
+                <Pressable style={[styles.selectButton, { borderColor: episodeVideoFile ? '#22c55e' : '#2a2a2a' }]} onPress={() => pickVideo(true)}><Ionicons name="videocam" size={20} color={episodeVideoFile ? '#22c55e' : '#fff'} /><Text style={styles.selectButtonText} numberOfLines={1}>{episodeVideoFile ? episodeVideoFile.name : 'Video *'}</Text></Pressable>
                 <Pressable style={[styles.selectButton, { borderColor: episodeSubtitleFile ? '#22c55e' : '#2a2a2a', marginBottom: 15 }]} onPress={() => pickSubtitle(true)}><Ionicons name="text" size={20} color={episodeSubtitleFile ? '#22c55e' : '#fff'} /><Text style={styles.selectButtonText}>{episodeSubtitleFile ? episodeSubtitleFile.name : 'Optional: Attach Subtitles (.vtt / .srt)'}</Text></Pressable>
                 <Pressable style={styles.uploadButton} onPress={queueEpisodeUpload}><Ionicons name="cloud-upload" size={20} color="#fff" /><Text style={styles.uploadButtonText}>Queue Upload</Text></Pressable>
               </>
@@ -710,15 +526,8 @@ export default function AdminScreen() {
                     <View style={styles.taskHeader}>
                       <Text style={styles.taskTitle}>{task.title}</Text>
                       <View style={{flexDirection: 'row', gap: 15, alignItems: 'center'}}>
-                        {task.status === 'error' && (
-                          <Pressable onPress={() => handleRetryTask(task)} style={{flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#333', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6}}>
-                            <Ionicons name="refresh" size={16} color="#3b82f6" />
-                            <Text style={{color: '#3b82f6', fontSize: 12, fontWeight: 'bold'}}>Retry</Text>
-                          </Pressable>
-                        )}
-                        {(task.status === 'done' || task.status === 'error') && (
-                          <Pressable onPress={() => removeTask(task.id)}><Ionicons name="close" size={20} color="#888" /></Pressable>
-                        )}
+                        {task.status === 'error' && <Pressable onPress={() => handleRetryTask(task)} style={{flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#333', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6}}><Ionicons name="refresh" size={16} color="#3b82f6" /><Text style={{color: '#3b82f6', fontSize: 12, fontWeight: 'bold'}}>Retry</Text></Pressable>}
+                        {(task.status === 'done' || task.status === 'error') && <Pressable onPress={() => removeTask(task.id)}><Ionicons name="close" size={20} color="#888" /></Pressable>}
                       </View>
                     </View>
                     {task.status==='uploading' && <View style={styles.taskProgressRow}><View style={styles.taskProgressBarBg}><View style={[styles.taskProgressBarFill, {width:`${task.progress}%`}]}/></View><Text style={styles.taskProgressText}>{task.progress}%</Text></View>}
@@ -748,35 +557,16 @@ export default function AdminScreen() {
                     <TextInput style={styles.input} value={editTitle} onChangeText={setEditTitle} placeholder="Title" />
                     <TextInput style={[styles.input, styles.descriptionInput]} multiline value={editDescription} onChangeText={setEditDescription} placeholder="Description" />
                     
-                    {/* ---> VISUAL EDIT UPLOADERS <--- */}
                     <Text style={styles.label}>Poster (Vertical)</Text>
                     <View style={styles.editImageContainer}>
-                       {(editPosterFile || editPosterUrl) && (
-                         <Image 
-                           source={{ uri: editPosterFile ? editPosterFile.uri : editPosterUrl }} 
-                           style={styles.editPosterPreview} 
-                           resizeMode="cover" 
-                         />
-                       )}
-                       <Pressable style={styles.editUploadBtn} onPress={pickEditPoster}>
-                          <Ionicons name="camera-outline" size={20} color="#fff" />
-                          <Text style={styles.editUploadBtnText}>Replace Poster</Text>
-                       </Pressable>
+                       {(editPosterFile || editPosterUrl) && <Image source={{ uri: editPosterFile ? editPosterFile.uri : editPosterUrl }} style={styles.editPosterPreview} resizeMode="cover" />}
+                       <Pressable style={styles.editUploadBtn} onPress={pickEditPoster}><Ionicons name="camera-outline" size={20} color="#fff" /><Text style={styles.editUploadBtnText}>Replace Poster</Text></Pressable>
                     </View>
 
                     <Text style={styles.label}>Backdrop (Horizontal 16:9)</Text>
                     <View style={styles.editImageContainer}>
-                       {(editBackdropFile || editBackdropUrl) && (
-                         <Image 
-                           source={{ uri: editBackdropFile ? editBackdropFile.uri : editBackdropUrl }} 
-                           style={styles.editBackdropPreview} 
-                           resizeMode="cover" 
-                         />
-                       )}
-                       <Pressable style={styles.editUploadBtn} onPress={pickEditBackdrop}>
-                          <Ionicons name="image-outline" size={20} color="#fff" />
-                          <Text style={styles.editUploadBtnText}>Replace Backdrop</Text>
-                       </Pressable>
+                       {(editBackdropFile || editBackdropUrl) && <Image source={{ uri: editBackdropFile ? editBackdropFile.uri : editBackdropUrl }} style={styles.editBackdropPreview} resizeMode="cover" />}
+                       <Pressable style={styles.editUploadBtn} onPress={pickEditBackdrop}><Ionicons name="image-outline" size={20} color="#fff" /><Text style={styles.editUploadBtnText}>Replace Backdrop</Text></Pressable>
                     </View>
 
                     {editingMovie.type === 'Movie' && (
@@ -784,9 +574,7 @@ export default function AdminScreen() {
                          <Text style={styles.label}>Video Content</Text>
                          <Pressable style={[styles.selectButton, { borderColor: editVideoFile ? '#22c55e' : '#333', backgroundColor: '#181818' }]} onPress={pickEditVideo}>
                             <Ionicons name="videocam" size={20} color={editVideoFile ? '#22c55e' : '#e50914'} />
-                            <Text style={styles.selectButtonText}>
-                               {editVideoFile ? `Queued: ${editVideoFile.name}` : 'Upload Replacement Video'}
-                            </Text>
+                            <Text style={styles.selectButtonText}>{editVideoFile ? `Queued: ${editVideoFile.name}` : 'Upload Replacement Video'}</Text>
                          </Pressable>
                          {editVideoFile && <Text style={{ color: '#eab308', fontSize: 12, marginTop: 6 }}>Warning: Saving will immediately overwrite the existing video.</Text>}
                       </View>
@@ -811,7 +599,6 @@ export default function AdminScreen() {
                         )}
                       </View>
                     )}
-
                     <View style={styles.editActionsRow}>
                       <Pressable style={styles.editCancelButton} onPress={() => setEditingMovie(null)}><Text style={styles.editCancelButtonText}>Cancel</Text></Pressable>
                       <Pressable style={styles.editSaveButton} onPress={handleMasterUpdate}>{editSaving ? <ActivityIndicator color="#fff"/> : <Text style={styles.editSaveButtonText}>Save All Changes</Text>}</Pressable>
@@ -836,8 +623,8 @@ export default function AdminScreen() {
           </View>
         )}
 
-        {/* --- TRASH SECTION --- */}
-        {activeSection === 'trash' && (
+        {/* --- TRASH SECTION (Super Admin Only) --- */}
+        {activeSection === 'trash' && userRole === 'super_admin' && (
           <View>
             {selectedTrashIds.length > 0 && (
               <View style={styles.bulkActionBar}>
@@ -852,12 +639,9 @@ export default function AdminScreen() {
             {manageLoading ? <ActivityIndicator color="#e50914" /> : (
               <>
                 {trashedMovies.length === 0 && trashedEpisodes.length === 0 && <Text style={styles.label}>Trash is empty.</Text>}
-                
                 {trashedMovies.map(m => (
                   <View key={`movie-${m.id}`} style={styles.manageItem}>
-                    <Pressable style={styles.checkboxZone} onPress={() => toggleTrashSelection(m.id)}>
-                      <Ionicons name={selectedTrashIds.includes(m.id) ? "checkbox" : "square-outline"} size={22} color={selectedTrashIds.includes(m.id) ? "#e50914" : "#666"} />
-                    </Pressable>
+                    <Pressable style={styles.checkboxZone} onPress={() => toggleTrashSelection(m.id)}><Ionicons name={selectedTrashIds.includes(m.id) ? "checkbox" : "square-outline"} size={22} color={selectedTrashIds.includes(m.id) ? "#e50914" : "#666"} /></Pressable>
                     <View style={styles.manageInfo}><Text style={styles.manageTitle}>{m.title}</Text><Text style={styles.manageMeta}>{m.type}</Text></View>
                     <View style={styles.manageActions}>
                       <Pressable style={[styles.manageButton, styles.manageButtonRestore]} onPress={() => handleRestoreMovie(m.id)}>{updatingId === m.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Restore</Text>}</Pressable>
@@ -865,7 +649,6 @@ export default function AdminScreen() {
                     </View>
                   </View>
                 ))}
-
                 {trashedEpisodes.map(ep => (
                   <View key={`ep-${ep.id}`} style={[styles.manageItem, { borderColor: '#444' }]}>
                     <View style={{ padding: 5, marginRight: 8 }}><Ionicons name="tv-outline" size={22} color="#888" /></View>
@@ -880,6 +663,49 @@ export default function AdminScreen() {
             )}
           </View>
         )}
+
+        {/* --- TEAM MANAGEMENT SECTION (Super Admin Only) --- */}
+        {activeSection === 'team' && userRole === 'super_admin' && (
+          <View style={styles.dashboardContainer}>
+             <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20}}>
+               <Text style={styles.dashboardTitle}>Team Management</Text>
+               <Pressable onPress={fetchTeamMembers}>
+                 {teamLoading ? <ActivityIndicator color="#e50914" /> : <Ionicons name="refresh" size={24} color="#888" />}
+               </Pressable>
+             </View>
+             
+             <Text style={styles.label}>Control who can upload and manage content.</Text>
+             
+             <View style={styles.leaderboardSection}>
+                {teamMembers.map(member => (
+                  <View key={member.id} style={[styles.leaderboardRow, {justifyContent: 'space-between'}]}>
+                     <View style={{flex: 1}}>
+                       <Text style={styles.leaderboardTitle}>User ID: {member.id.substring(0,8)}...</Text>
+                       <Text style={[styles.leaderboardCategory, { color: member.role === 'super_admin' ? '#eab308' : member.role === 'manager' ? '#3b82f6' : '#888' }]}>
+                         {member.role ? member.role.toUpperCase() : 'USER'}
+                       </Text>
+                     </View>
+                     
+                     {member.role !== 'super_admin' && (
+                       <Pressable 
+                         style={[styles.manageButton, { backgroundColor: member.role === 'manager' ? '#333' : '#e50914' }]} 
+                         onPress={() => handleToggleRole(member.id, member.role)}
+                       >
+                         {updatingId === member.id ? <ActivityIndicator size="small" color="#fff"/> : (
+                           <Text style={styles.manageButtonText}>{member.role === 'manager' ? 'Demote to User' : 'Make Manager'}</Text>
+                         )}
+                       </Pressable>
+                     )}
+                     
+                     {member.role === 'super_admin' && (
+                        <Text style={{color: '#eab308', fontWeight: 'bold', fontSize: 12}}>SUPER ADMIN (Protected)</Text>
+                     )}
+                  </View>
+                ))}
+             </View>
+          </View>
+        )}
+
       </ScrollView>
     </View>
   );
@@ -940,14 +766,11 @@ const styles = StyleSheet.create({
   manageButtonRestore: { backgroundColor: '#16a34a' },
   manageButtonText: { fontSize: 13, fontWeight: '600', color: '#fff' },
   editSection: { backgroundColor: '#111', padding: 20, borderRadius: 15, borderLeftWidth: 4, borderLeftColor: '#e50914' },
-  
-  // NEW STYLES FOR VISUAL UPLOADER
   editImageContainer: { flexDirection: 'row', gap: 15, marginBottom: 20, alignItems: 'flex-start' },
   editPosterPreview: { width: 80, aspectRatio: 2/3, borderRadius: 8, backgroundColor: '#222', borderWidth: 1, borderColor: '#333' },
   editBackdropPreview: { width: 140, aspectRatio: 16/9, borderRadius: 8, backgroundColor: '#222', borderWidth: 1, borderColor: '#333' },
   editUploadBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#181818', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: '#333', alignSelf: 'center' },
   editUploadBtnText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
-
   editActionsRow: { flexDirection: 'row', gap: 10, marginTop: 20 },
   editCancelButton: { flex: 1, padding: 12, backgroundColor: '#333', borderRadius: 8, alignItems: 'center' },
   editCancelButtonText: { color: '#fff', fontWeight: 'bold' },
@@ -959,7 +782,6 @@ const styles = StyleSheet.create({
   bulkActionButtonText: { color: '#fff', fontWeight: 'bold' },
   episodeManager: { marginTop: 20, borderTopWidth: 1, borderTopColor: '#222', paddingTop: 15 },
   epEditCard: { backgroundColor: '#181818', padding: 12, borderRadius: 10, marginBottom: 10, borderWidth: 1, borderColor: '#2a2a2a' },
-  
   dashboardContainer: { paddingBottom: 20 },
   dashboardTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff' },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 15 },
@@ -967,7 +789,6 @@ const styles = StyleSheet.create({
   statIcon: { marginBottom: 10 },
   statValue: { fontSize: 28, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
   statLabel: { fontSize: 13, color: '#888', fontWeight: '600' },
-
   leaderboardSection: { marginTop: 30, backgroundColor: '#111', borderRadius: 12, padding: 20, borderWidth: 1, borderColor: '#1f1f1f' },
   leaderboardSectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff' },
   leaderboardRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#222' },
