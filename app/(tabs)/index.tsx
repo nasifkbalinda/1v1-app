@@ -30,7 +30,9 @@ export default function HomeScreen() {
   const { width, height } = useWindowDimensions();
   const isDesktop = width > 768;
 
-  const [isAdmin, setIsAdmin] = useState(false);
+  // ---> UPDATED: State to track if user can see Admin button <---
+  const [canAccessAdmin, setCanAccessAdmin] = useState(false);
+  
   const [movies, setMovies] = useState<Movie[]>([]);
   const [continueWatching, setContinueWatching] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,12 +40,28 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<Filter>('All');
 
+  // ---> UPDATED: Check database for role instead of hardcoded email <---
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setIsAdmin(data?.user?.email?.toLowerCase() === 'saifnasif1@gmail.com');
-    });
+    const checkRole = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+        if (data && (data.role === 'super_admin' || data.role === 'manager')) {
+          setCanAccessAdmin(true);
+        } else {
+          setCanAccessAdmin(false);
+        }
+      }
+    };
+
+    checkRole();
+
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      setIsAdmin(session?.user?.email?.toLowerCase() === 'saifnasif1@gmail.com');
+      if (session?.user) {
+        checkRole();
+      } else {
+        setCanAccessAdmin(false);
+      }
     });
     return () => { authListener.subscription.unsubscribe(); };
   }, []);
@@ -169,7 +187,8 @@ export default function HomeScreen() {
               <NavLink title="My List" path="/mylist" />
               <NavLink title="Downloads" path="/downloads" />
               <NavLink title="Settings" path="/settings" />
-              {isAdmin && <NavLink title="Admin" path="/admin" />}
+              {/* ---> UPDATED: Uses the new variable <--- */}
+              {canAccessAdmin && <NavLink title="Admin" path="/admin" />}
             </View>
           )}
         </View>
@@ -206,8 +225,6 @@ export default function HomeScreen() {
             ) : (
               <Image source={{ uri: heroMovie.backdrop_url || heroMovie.poster_url || '' }} style={styles.heroImage} resizeMode="cover" />
             )}
-            
-            {/* The top gradient has been completely removed to keep the image bright! */}
             
             <LinearGradient colors={['rgba(10,10,10,0.9)', 'transparent']} start={{x: 0, y: 0}} end={{x: 0.6, y: 0}} style={StyleSheet.absoluteFillObject} />
             <LinearGradient colors={['transparent', 'rgba(10,10,10,0.8)', '#0a0a0a']} locations={[0.5, 0.85, 1]} style={StyleSheet.absoluteFillObject} />
@@ -335,14 +352,10 @@ const styles = StyleSheet.create({
   logo: { fontSize: 32, fontWeight: 'bold', color: '#e50914', marginRight: 40 },
   primaryNav: { flexDirection: 'row', gap: 24 },
   navItem: { paddingVertical: 5 },
-  
-  // Left side nav text - pure bright white with sharp drop shadow
   navText: { color: '#e5e5e5', fontSize: 13, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   navTextActive: { color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,1)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   
   categoryNav: { flexDirection: 'row', gap: 20 },
-  
-  // Right side filter text - matched perfectly to the left side
   filterLink: { color: '#e5e5e5', fontSize: 13, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   filterLinkActive: { color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,1)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   
