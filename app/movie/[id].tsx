@@ -9,7 +9,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-type Movie = { id: string; title: string; description: string | null; poster_url: string | null; video_url: string | null; category: string | null; type: string | null; };
+// ---> UPDATED: Added backdrop_url to the Movie type <---
+type Movie = { id: string; title: string; description: string | null; poster_url: string | null; backdrop_url?: string | null; video_url: string | null; category: string | null; type: string | null; };
 type Episode = { id: string; season_number: number; episode_number: number; title: string; video_url: string | null; };
 
 function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initialTime: number; onTimeUpdate: (time: number) => void }) {
@@ -127,7 +128,6 @@ export default function TheaterScreen() {
           setEpisodes(epData || []);
         }
 
-        // ---> FIXED: Now correctly filters out trashed movies using .eq('status', 'active') <---
         const { data: simData } = await supabase.from('movies')
           .select('*')
           .eq('category', movieData.category)
@@ -225,7 +225,8 @@ export default function TheaterScreen() {
           <VideoPlayerBlock url={currentVideoUrl} movieId={movie.id} userId={userId} initialTime={0} onError={()=>{}} />
         ) : (
           <View style={styles.posterBox}>
-            <Image source={{ uri: movie.poster_url }} style={styles.mainPoster} />
+            {/* ---> UPDATED: Uses backdrop_url if available, with 'cover' scaling <--- */}
+            <Image source={{ uri: movie.backdrop_url || movie.poster_url }} style={styles.mainPoster} resizeMode="cover" />
             <Pressable style={styles.playOverlay} onPress={handlePlayMain}>
               <Ionicons name="play" size={60} color="#fff" />
             </Pressable>
@@ -330,8 +331,10 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   videoContainer: { width: '100%', maxWidth: 960, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#000', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
   posterBox: { width: '100%', maxWidth: 960, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#111', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
-  mainPoster: { width: '100%', height: '100%', opacity: 0.6 },
-  playOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
+  // ---> UPDATED: Removed opacity for a crisp image <---
+  mainPoster: { width: '100%', height: '100%' },
+  // ---> UPDATED: Added a subtle black tint overlay so the play button stands out <---
+  playOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)' },
   details: { padding: 20, maxWidth: 960, alignSelf: 'center', width: '100%' },
   title: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
   activeEpisodeTitle: { color: '#e50914', fontSize: 15, fontWeight: 'bold', marginTop: 6 },
