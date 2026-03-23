@@ -99,6 +99,10 @@ export default function TheaterScreen() {
   const [isInMyList, setIsInMyList] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
+  
+  // ---> NEW: Track which episode is currently active <---
+  const [activeEpisode, setActiveEpisode] = useState<Episode | null>(null);
+
   const [isDownloaded, setIsDownloaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
@@ -163,13 +167,52 @@ export default function TheaterScreen() {
     finally { setIsDownloading(false); setDownloadProgress(null); }
   };
 
+  // ---> NEW: Intelligent Play Handlers <---
+  const handlePlayMain = () => {
+    if (movie?.type === 'TV Series' && episodes.length > 0) {
+      if (!activeEpisode) {
+        setCurrentVideoUrl(episodes[0].video_url);
+        setActiveEpisode(episodes[0]);
+      }
+    } else {
+      setCurrentVideoUrl(movie?.video_url || null);
+    }
+    setIsPlaying(true);
+  };
+
+  const handlePlayEpisode = (ep: Episode) => {
+    setCurrentVideoUrl(ep.video_url);
+    setActiveEpisode(ep);
+    setIsPlaying(true);
+  };
+
+  const hasNextEpisode = activeEpisode ? episodes.findIndex(e => e.id === activeEpisode.id) < episodes.length - 1 : false;
+  
+  const handleNextEpisode = () => {
+    if (!activeEpisode) return;
+    const currentIndex = episodes.findIndex(e => e.id === activeEpisode.id);
+    if (currentIndex !== -1 && currentIndex < episodes.length - 1) {
+      const nextEp = episodes[currentIndex + 1];
+      setCurrentVideoUrl(nextEp.video_url);
+      setActiveEpisode(nextEp);
+      setIsPlaying(true);
+    }
+  };
+
+  // ---> NEW: Dynamic Responsive Grid Math <---
+  const gridColumns = isDesktop ? 6 : (width > 550 ? 4 : 2);
+  const gridGap = 10;
+  const gridPadding = 40; // 20px padding on left and right of the details container
+  const safeCardWidth = (width - gridPadding - (gridGap * (gridColumns - 1))) / gridColumns;
+  // Ensure it doesn't get ridiculously wide on ultra-wide screens
+  const finalCardWidth = Math.min(safeCardWidth, 160);
+
   if (loading) return <View style={styles.container}><ActivityIndicator size="large" color="#e50914" /></View>;
   if (!movie) return <View style={styles.container}><Text style={{color:'#fff'}}>Not found.</Text></View>;
 
   return (
     <View style={styles.container}>
       
-      {/* ---> FIXED: BACK BUTTON IS NOW SAFELY IN THE TOP LEFT CORNER OUTSIDE THE VIDEO <--- */}
       <View style={[styles.header, { top: Platform.OS === 'web' ? 20 : insets.top + 10 }]}>
         <Pressable onPress={() => router.back()} style={styles.backButton}><Ionicons name="arrow-back" size={24} color="#fff" /></Pressable>
       </View>
@@ -180,7 +223,7 @@ export default function TheaterScreen() {
         ) : (
           <View style={styles.posterBox}>
             <Image source={{ uri: movie.poster_url }} style={styles.mainPoster} />
-            <Pressable style={styles.playOverlay} onPress={() => { setCurrentVideoUrl(movie.type === 'TV Series' ? episodes[0]?.video_url : movie.video_url); setIsPlaying(true); }}>
+            <Pressable style={styles.playOverlay} onPress={handlePlayMain}>
               <Ionicons name="play" size={60} color="#fff" />
             </Pressable>
           </View>
@@ -188,13 +231,29 @@ export default function TheaterScreen() {
 
         <View style={styles.details}>
           <Text style={styles.title}>{movie.title}</Text>
+          
+          {/* ---> NEW: Active Episode Title Overlay <--- */}
+          {activeEpisode && isPlaying && (
+            <Text style={styles.activeEpisodeTitle}>
+              Now Playing: S{activeEpisode.season_number} E{activeEpisode.episode_number} - {activeEpisode.title}
+            </Text>
+          )}
+
           <Text style={styles.meta}>{movie.category} • {movie.type}</Text>
 
           <View style={styles.buttonRow}>
-            <Pressable style={styles.playBtn} onPress={() => setIsPlaying(true)}>
+            <Pressable style={styles.playBtn} onPress={handlePlayMain}>
               <Ionicons name="play" size={20} color="#000" />
-              <Text style={styles.playBtnText}>Play</Text>
+              <Text style={styles.playBtnText}>{isPlaying ? 'Playing' : 'Play'}</Text>
             </Pressable>
+
+            {/* ---> NEW: Next Episode Button <--- */}
+            {hasNextEpisode && isPlaying && (
+               <Pressable style={styles.nextBtn} onPress={handleNextEpisode}>
+                 <Ionicons name="play-skip-forward" size={20} color="#fff" />
+                 <Text style={styles.nextBtnText}>Next Ep</Text>
+               </Pressable>
+            )}
 
             <Pressable style={styles.actionBtn} onPress={toggleWatchlist}>
               <Ionicons name={isInMyList ? "checkmark" : "add"} size={24} color="#fff" />
@@ -214,24 +273,43 @@ export default function TheaterScreen() {
           {movie.type === 'TV Series' && episodes.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Episodes</Text>
-              {episodes.map(ep => (
-                <Pressable key={ep.id} style={styles.epRow} onPress={() => { setCurrentVideoUrl(ep.video_url); setIsPlaying(true); }}>
-                  <View style={styles.epInfo}>
-                    <Text style={styles.epMeta}>S{ep.season_number} E{ep.episode_number}</Text>
-                    <Text style={styles.epTitle}>{ep.title}</Text>
-                  </View>
-                  <Ionicons name="play-circle-outline" size={28} color="#fff" />
-                </Pressable>
-              ))}
+              {episodes.map(ep => {
+                const isActive = activeEpisode?.id === ep.id;
+                return (
+                  <Pressable 
+                    key={ep.id} 
+                    style={[styles.epRow, isActive && styles.activeEpRow]} 
+                    onPress={() => handlePlayEpisode(ep)}
+                  >
+                    <View style={styles.epInfo}>
+                      <Text style={[styles.epMeta, isActive && { color: '#ff4b4b' }]}>
+                        S{ep.season_number} E{ep.episode_number}
+                      </Text>
+                      <Text style={[styles.epTitle, isActive && { fontWeight: 'bold' }]}>
+                        {ep.title}
+                      </Text>
+                    </View>
+                    <Ionicons 
+                      name={isActive ? "play-circle" : "play-circle-outline"} 
+                      size={28} 
+                      color={isActive ? "#e50914" : "#fff"} 
+                    />
+                  </Pressable>
+                );
+              })}
             </View>
           )}
 
           {similarMovies.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>More Like This</Text>
-              <View style={styles.grid}>
+              <View style={[styles.grid, { gap: gridGap }]}>
                 {similarMovies.map(m => (
-                  <Pressable key={m.id} style={[styles.gridItem, { width: isDesktop ? 140 : (width - 50) / 3 }]} onPress={() => router.replace(`/movie/${m.id}`)}>
+                  <Pressable 
+                    key={m.id} 
+                    style={[styles.gridItem, { width: finalCardWidth }]} 
+                    onPress={() => router.replace(`/movie/${m.id}`)}
+                  >
                     <Image source={{ uri: m.poster_url }} style={styles.gridImage} />
                   </Pressable>
                 ))}
@@ -246,35 +324,33 @@ export default function TheaterScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  
-  // ---> FIXED: HEADER MOVED OUTSIDE OF VIDEO FLOW <---
   header: { position: 'absolute', left: 20, zIndex: 100 },
   backButton: { backgroundColor: 'rgba(0,0,0,0.6)', padding: 10, borderRadius: 24 },
-  
   scroll: { flex: 1 },
-  
-  // ---> FIXED: PLAYER NOW CAPPED AT 960px WIDTH FOR OPTIMAL DESKTOP VIEWING <---
   videoContainer: { width: '100%', maxWidth: 960, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#000', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
   posterBox: { width: '100%', maxWidth: 960, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#111', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
-  
   mainPoster: { width: '100%', height: '100%', opacity: 0.6 },
   playOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
   details: { padding: 20, maxWidth: 960, alignSelf: 'center', width: '100%' },
   title: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
+  activeEpisodeTitle: { color: '#e50914', fontSize: 15, fontWeight: 'bold', marginTop: 6 },
   meta: { color: '#888', marginVertical: 8, fontWeight: '600' },
   buttonRow: { flexDirection: 'row', gap: 20, marginVertical: 15, alignItems: 'center' },
   playBtn: { backgroundColor: '#fff', paddingHorizontal: 30, height: 40, borderRadius: 4, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 },
   playBtnText: { color: '#000', fontWeight: 'bold', fontSize: 14 },
+  nextBtn: { backgroundColor: '#333', paddingHorizontal: 20, height: 40, borderRadius: 4, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 },
+  nextBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
   actionBtn: { alignItems: 'center', minWidth: 60 },
   actionBtnText: { color: '#888', fontSize: 11, marginTop: 4 },
   description: { color: '#ccc', fontSize: 14, lineHeight: 22, marginTop: 10 },
   section: { marginTop: 40 },
   sectionTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 15 },
-  epRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', padding: 15, borderRadius: 8, marginBottom: 10 },
+  epRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', padding: 15, borderRadius: 8, marginBottom: 10, borderWidth: 1, borderColor: 'transparent' },
+  activeEpRow: { backgroundColor: '#1a0a0b', borderColor: '#e50914' },
   epInfo: { flex: 1 },
   epMeta: { color: '#e50914', fontWeight: 'bold', fontSize: 12 },
   epTitle: { color: '#fff', fontSize: 14, marginTop: 2 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  gridItem: { aspectRatio: 2/3 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap' },
+  gridItem: { aspectRatio: 2/3, marginBottom: 10 },
   gridImage: { width: '100%', height: '100%', borderRadius: 4, backgroundColor: '#111' }
 });
