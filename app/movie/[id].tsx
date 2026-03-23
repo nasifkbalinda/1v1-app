@@ -102,8 +102,8 @@ export default function TheaterScreen() {
   
   const [activeEpisode, setActiveEpisode] = useState<Episode | null>(null);
   
-  // ---> NEW: Season Dropdown State <---
-  const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
+  // ---> NEW: State to track which Season accordion is currently open <---
+  const [expandedSeason, setExpandedSeason] = useState<number | null>(null);
 
   const [isDownloaded, setIsDownloaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -128,9 +128,9 @@ export default function TheaterScreen() {
         if (movieData.type === 'TV Series') {
           const { data: epData } = await supabase.from('episodes').select('*').eq('movie_id', id).eq('status', 'active').order('season_number').order('episode_number');
           setEpisodes(epData || []);
-          // Automatically select the first available season
+          // Automatically expand the first available season
           if (epData && epData.length > 0) {
-             setSelectedSeason(epData[0].season_number);
+             setExpandedSeason(epData[0].season_number);
           }
         }
 
@@ -184,7 +184,7 @@ export default function TheaterScreen() {
       if (!activeEpisode) {
         setCurrentVideoUrl(episodes[0].video_url);
         setActiveEpisode(episodes[0]);
-        setSelectedSeason(episodes[0].season_number); // Update season UI
+        setExpandedSeason(episodes[0].season_number);
       }
     } else {
       setCurrentVideoUrl(movie?.video_url || null);
@@ -207,15 +207,12 @@ export default function TheaterScreen() {
       const nextEp = episodes[currentIndex + 1];
       setCurrentVideoUrl(nextEp.video_url);
       setActiveEpisode(nextEp);
-      setSelectedSeason(nextEp.season_number); // Automatically switch the season tab if needed
+      setExpandedSeason(nextEp.season_number); // Auto-expand the season if we roll over to a new one
       setIsPlaying(true);
     }
   };
 
-  // ---> NEW: Calculate unique seasons for the UI <---
   const availableSeasons = Array.from(new Set(episodes.map(e => e.season_number))).sort((a,b) => a-b);
-  // ---> NEW: Filter episodes to only show the selected season <---
-  const displayedEpisodes = episodes.filter(ep => ep.season_number === selectedSeason);
 
   const gridColumns = isDesktop ? 6 : (width > 550 ? 4 : 2);
   const gridGap = 10;
@@ -246,87 +243,91 @@ export default function TheaterScreen() {
         )}
 
         <View style={styles.details}>
-          <Text style={styles.title}>{movie.title}</Text>
+          {/* ---> UPDATED: Added selectable={false} to prevent text selection and address mapping <--- */}
+          <Text style={styles.title} selectable={false}>{movie.title}</Text>
           
           {activeEpisode && isPlaying && (
-            <Text style={styles.activeEpisodeTitle}>
+            <Text style={styles.activeEpisodeTitle} selectable={false}>
               Now Playing: S{activeEpisode.season_number} E{activeEpisode.episode_number} - {activeEpisode.title}
             </Text>
           )}
 
-          <Text style={styles.meta}>{movie.category} • {movie.type}</Text>
+          <Text style={styles.meta} selectable={false}>{movie.category} • {movie.type}</Text>
 
           <View style={styles.buttonRow}>
             <Pressable style={styles.playBtn} onPress={handlePlayMain}>
               <Ionicons name="play" size={20} color="#000" />
-              <Text style={styles.playBtnText}>{isPlaying ? 'Playing' : 'Play'}</Text>
+              <Text style={styles.playBtnText} selectable={false}>{isPlaying ? 'Playing' : 'Play'}</Text>
             </Pressable>
 
             {hasNextEpisode && isPlaying && (
                <Pressable style={styles.nextBtn} onPress={handleNextEpisode}>
                  <Ionicons name="play-skip-forward" size={20} color="#fff" />
-                 <Text style={styles.nextBtnText}>Next Ep</Text>
+                 <Text style={styles.nextBtnText} selectable={false}>Next Ep</Text>
                </Pressable>
             )}
 
             <Pressable style={styles.actionBtn} onPress={toggleWatchlist}>
               <Ionicons name={isInMyList ? "checkmark" : "add"} size={24} color="#fff" />
-              <Text style={styles.actionBtnText}>My List</Text>
+              <Text style={styles.actionBtnText} selectable={false}>My List</Text>
             </Pressable>
 
             {!isDownloaded && !isOfflineMode && Platform.OS !== 'web' && (
               <Pressable style={styles.actionBtn} onPress={handleDownload} disabled={isDownloading}>
                 <Ionicons name="download-outline" size={22} color={isDownloading ? "#555" : "#fff"} />
-                <Text style={styles.actionBtnText}>{isDownloading ? `${downloadProgress}%` : 'Download'}</Text>
+                <Text style={styles.actionBtnText} selectable={false}>{isDownloading ? `${downloadProgress}%` : 'Download'}</Text>
               </Pressable>
             )}
           </View>
 
-          <Text style={styles.description}>{movie.description}</Text>
+          <Text style={styles.description} selectable={false}>{movie.description}</Text>
 
           {movie.type === 'TV Series' && availableSeasons.length > 0 && (
             <View style={styles.section}>
+              <Text style={styles.sectionTitle} selectable={false}>Episodes</Text>
               
-              {/* ---> NEW: Season Pill Selector UI <--- */}
-              <View style={styles.seasonSelectorContainer}>
-                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
-                   {availableSeasons.map(seasonNum => (
-                      <Pressable 
-                        key={`season-${seasonNum}`} 
-                        style={[styles.seasonPill, selectedSeason === seasonNum && styles.activeSeasonPill]}
-                        onPress={() => setSelectedSeason(seasonNum)}
-                      >
-                        <Text style={[styles.seasonPillText, selectedSeason === seasonNum && styles.activeSeasonPillText]}>
-                           Season {seasonNum}
-                        </Text>
-                      </Pressable>
-                   ))}
-                 </ScrollView>
-              </View>
+              {/* ---> NEW: Vertical Season Accordion <--- */}
+              {availableSeasons.map(seasonNum => {
+                const isExpanded = expandedSeason === seasonNum;
+                const seasonEpisodes = episodes.filter(ep => ep.season_number === seasonNum);
 
-              {/* Only maps through the episodes belonging to the Selected Season */}
-              {displayedEpisodes.map(ep => {
-                const isActive = activeEpisode?.id === ep.id;
                 return (
-                  <Pressable 
-                    key={ep.id} 
-                    style={[styles.epRow, isActive && styles.activeEpRow]} 
-                    onPress={() => handlePlayEpisode(ep)}
-                  >
-                    <View style={styles.epInfo}>
-                      <Text style={[styles.epMeta, isActive && { color: '#ff4b4b' }]}>
-                        S{ep.season_number} E{ep.episode_number}
-                      </Text>
-                      <Text style={[styles.epTitle, isActive && { fontWeight: 'bold' }]}>
-                        {ep.title}
-                      </Text>
-                    </View>
-                    <Ionicons 
-                      name={isActive ? "play-circle" : "play-circle-outline"} 
-                      size={28} 
-                      color={isActive ? "#e50914" : "#fff"} 
-                    />
-                  </Pressable>
+                  <View key={`season-${seasonNum}`} style={styles.seasonAccordion}>
+                    <Pressable 
+                      style={styles.seasonHeader} 
+                      onPress={() => setExpandedSeason(isExpanded ? null : seasonNum)}
+                    >
+                      <Text style={styles.seasonHeaderText} selectable={false}>Season {seasonNum}</Text>
+                      <Ionicons name={isExpanded ? "chevron-up" : "chevron-down"} size={20} color="#fff" />
+                    </Pressable>
+
+                    {isExpanded && (
+                      <View style={styles.seasonEpisodesList}>
+                        {seasonEpisodes.map(ep => {
+                          const isActive = activeEpisode?.id === ep.id;
+                          return (
+                            <Pressable 
+                              key={ep.id} 
+                              style={[styles.epRow, isActive && styles.activeEpRow]} 
+                              onPress={() => handlePlayEpisode(ep)}
+                            >
+                              <View style={styles.epInfo}>
+                                {/* ---> UPDATED: Cleaner title formatting <--- */}
+                                <Text style={[styles.epTitle, isActive && { color: '#e50914', fontWeight: 'bold' }]} selectable={false}>
+                                  {ep.episode_number}. {ep.title}
+                                </Text>
+                              </View>
+                              <Ionicons 
+                                name={isActive ? "play-circle" : "play-circle-outline"} 
+                                size={28} 
+                                color={isActive ? "#e50914" : "#fff"} 
+                              />
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    )}
+                  </View>
                 );
               })}
             </View>
@@ -334,7 +335,7 @@ export default function TheaterScreen() {
 
           {similarMovies.length > 0 && (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>More Like This</Text>
+              <Text style={styles.sectionTitle} selectable={false}>More Like This</Text>
               <View style={[styles.grid, { gap: gridGap }]}>
                 {similarMovies.map(m => (
                   <Pressable 
@@ -378,18 +379,17 @@ const styles = StyleSheet.create({
   section: { marginTop: 40 },
   sectionTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 15 },
   
-  // ---> NEW: Season UI Styles <---
-  seasonSelectorContainer: { marginBottom: 20 },
-  seasonPill: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 999, backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333' },
-  activeSeasonPill: { backgroundColor: '#e50914', borderColor: '#e50914' },
-  seasonPillText: { color: '#888', fontWeight: 'bold', fontSize: 14 },
-  activeSeasonPillText: { color: '#fff' },
+  // ---> NEW: Accordion Styles <---
+  seasonAccordion: { marginBottom: 10, backgroundColor: '#111', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#222' },
+  seasonHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15, backgroundColor: '#1a1a1a' },
+  seasonHeaderText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  seasonEpisodesList: { padding: 10 },
 
-  epRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', padding: 15, borderRadius: 8, marginBottom: 10, borderWidth: 1, borderColor: 'transparent' },
+  epRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 8, marginBottom: 5, borderWidth: 1, borderColor: 'transparent' },
   activeEpRow: { backgroundColor: '#1a0a0b', borderColor: '#e50914' },
   epInfo: { flex: 1 },
-  epMeta: { color: '#e50914', fontWeight: 'bold', fontSize: 12 },
-  epTitle: { color: '#fff', fontSize: 14, marginTop: 2 },
+  epTitle: { color: '#fff', fontSize: 14 },
+  
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   gridItem: { aspectRatio: 2/3, marginBottom: 10 },
   gridImage: { width: '100%', height: '100%', borderRadius: 4, backgroundColor: '#111' }
