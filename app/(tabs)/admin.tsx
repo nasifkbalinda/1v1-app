@@ -66,8 +66,10 @@ export default function AdminScreen() {
   const [editPosterFile, setEditPosterFile] = useState<any | null>(null);
   const [editBackdropUrl, setEditBackdropUrl] = useState('');
   const [editBackdropFile, setEditBackdropFile] = useState<any | null>(null);
+  
   const [editVideoUrl, setEditVideoUrl] = useState('');
   const [editVideoFile, setEditVideoFile] = useState<any | null>(null);
+  const [editSubtitleFile, setEditSubtitleFile] = useState<any | null>(null);
   
   const [editEpisodes, setEditEpisodes] = useState<any[]>([]);
   const [loadingEpisodes, setLoadingEpisodes] = useState(false);
@@ -186,11 +188,9 @@ export default function AdminScreen() {
 
   const fetchAllMovies = useCallback(async () => { 
     setManageLoading(true); 
-    
     const { data: mData, error: mError } = await supabase.from('movies').select('*, profiles(email)').order('title'); 
     if (mError) {
       console.error("Error fetching movies:", mError.message);
-      if (Platform.OS === 'web') window.alert("Database Error: " + mError.message);
     }
     setManageMovies(mData ?? []); 
     
@@ -233,6 +233,14 @@ export default function AdminScreen() {
       if (isEpisode) setEpisodeVideoFile(fd); else setVideoFile(fd);
     }
   };
+  const pickSubtitle = async (isEpisode: boolean = false) => {
+    const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
+    if (!result.canceled) {
+      const fd = { uri: result.assets[0].uri, name: result.assets[0].name, mimeType: 'text/vtt', file: result.assets[0].file };
+      if (isEpisode) setEpisodeSubtitleFile(fd); else setSubtitleFile(fd);
+    }
+  };
+
   const pickEditPoster = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
     if (!result.canceled) setEditPosterFile({ uri: result.assets[0].uri, name: result.assets[0].fileName ?? `edit_poster.jpg`, mimeType: result.assets[0].mimeType ?? 'image/jpeg', file: (result.assets[0] as any).file });
@@ -247,11 +255,27 @@ export default function AdminScreen() {
     const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: true });
     if (!result.canceled) setEditVideoFile({ uri: result.assets[0].uri, name: result.assets[0].name, mimeType: result.assets[0].mimeType ?? 'video/mp4', file: result.assets[0].file });
   };
-  const pickSubtitle = async (isEpisode: boolean = false) => {
+
+  const pickEditSubtitle = async () => {
     const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
     if (!result.canceled) {
-      const fd = { uri: result.assets[0].uri, name: result.assets[0].name, mimeType: 'text/vtt', file: result.assets[0].file };
-      if (isEpisode) setEpisodeSubtitleFile(fd); else setSubtitleFile(fd);
+      setEditSubtitleFile({ uri: result.assets[0].uri, name: result.assets[0].name, mimeType: 'text/vtt', file: result.assets[0].file });
+    }
+  };
+
+  const pickEpisodeEditVideo = async (epId: string) => {
+    const msg = "Upload New Video? This will replace the episode's current video.";
+    if (Platform.OS === 'web' ? !window.confirm(msg) : false) return;
+    const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: true });
+    if (!result.canceled) {
+      updateLocalEpisode(epId, 'newVideoFile', { uri: result.assets[0].uri, name: result.assets[0].name, mimeType: result.assets[0].mimeType ?? 'video/mp4', file: result.assets[0].file });
+    }
+  };
+
+  const pickEpisodeEditSubtitle = async (epId: string) => {
+    const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
+    if (!result.canceled) {
+      updateLocalEpisode(epId, 'newSubtitleFile', { uri: result.assets[0].uri, name: result.assets[0].name, mimeType: 'text/vtt', file: result.assets[0].file });
     }
   };
 
@@ -394,11 +418,18 @@ export default function AdminScreen() {
     } catch(e: any) { Alert.alert("Error", e.message); } finally { setTvSeriesUploading(false); }
   };
 
-  const fetchTvSeries = useCallback(async () => { setLoadingSeries(true); const { data } = await supabase.from('movies').select('id, title').eq('type', 'TV Series').eq('status', 'active').order('title'); setTvSeries(data ?? []); setLoadingSeries(false); }, []);
+  const fetchTvSeries = useCallback(async () => { 
+    setLoadingSeries(true); 
+    const { data } = await supabase.from('movies').select('id, title').eq('type', 'TV Series').eq('status', 'active').order('title'); 
+    setTvSeries(data ?? []); 
+    setLoadingSeries(false); 
+  }, []);
+  useEffect(() => { if (uploadMode === 'episode') fetchTvSeries(); }, [uploadMode, fetchTvSeries]);
 
   const startEditing = async (movie: any) => {
     setEditingMovie(movie); setEditTitle(movie.title); setEditDescription(movie.description || ''); setEditCategory(movie.category || ''); setEditPosterUrl(movie.poster_url || ''); setEditBackdropUrl(movie.backdrop_url || ''); setEditVideoUrl(movie.video_url || '');
-    setEditPosterFile(null); setEditBackdropFile(null); setEditVideoFile(null);
+    setEditPosterFile(null); setEditBackdropFile(null); setEditVideoFile(null); 
+    setEditSubtitleFile(null); 
     if (movie.type === 'TV Series') { setLoadingEpisodes(true); const { data } = await supabase.from('episodes').select('*').eq('movie_id', movie.id).neq('status', 'trash').order('season_number').order('episode_number'); setEditEpisodes(data || []); setLoadingEpisodes(false); }
   };
 
@@ -414,22 +445,49 @@ export default function AdminScreen() {
       const { error: movieError } = await supabase.from('movies').update({ title: editTitle, description: editDescription, category: editCategory, poster_url: finalPosterUrl, backdrop_url: finalBackdropUrl }).eq('id', editingMovie.id);
       if (movieError) throw movieError;
 
-      if (editVideoFile && editingMovie.type === 'Movie') {
+      if (editingMovie.type === 'Movie' && (editVideoFile || editSubtitleFile)) {
+        if (!editVideoFile) {
+          Alert.alert("Missing Video", "Currently, to attach new subtitles you must also select the replacement video to process them together.");
+          throw new Error("Missing video file for subtitle attachment.");
+        }
+        
+        let subUrl = null;
+        if (editSubtitleFile) {
+           subUrl = await uploadFile(editSubtitleFile, `subtitles/${timestamp}-${safeSlug}.vtt`, 'text/vtt');
+        }
+        
         const taskId = `edit-${Date.now().toString()}`;
         setUploadTasks(prev => [{ id: taskId, title: `Update Video: ${editTitle}`, type: 'Movie', progress: 0, status: 'uploading', message: 'Starting video replacement...' }, ...prev]);
-        uploadVideoToMux(editVideoFile, taskId, null, `movies:${editingMovie.id}`).catch(e => updateTask(taskId, { status: 'error', message: e.message }));
+        uploadVideoToMux(editVideoFile, taskId, subUrl, `movies:${editingMovie.id}`).catch(e => updateTask(taskId, { status: 'error', message: e.message }));
       }
 
       if (editingMovie.type === 'TV Series' && editEpisodes.length > 0) {
-        const episodeUpdates = editEpisodes.map(ep => supabase.from('episodes').update({ title: ep.title, season_number: parseInt(ep.season_number), episode_number: parseInt(ep.episode_number) }).eq('id', ep.id));
+        const episodeUpdates = editEpisodes.map(async ep => {
+          const { error } = await supabase.from('episodes').update({ title: ep.title, season_number: parseInt(ep.season_number), episode_number: parseInt(ep.episode_number) }).eq('id', ep.id);
+          if (error) throw error;
+          
+          if (ep.newVideoFile || ep.newSubtitleFile) {
+             if (!ep.newVideoFile) {
+                throw new Error(`Episode S${ep.season_number}E${ep.episode_number} needs a replacement video to attach its subtitles.`);
+             }
+             let epSubUrl = null;
+             if (ep.newSubtitleFile) {
+                 epSubUrl = await uploadFile(ep.newSubtitleFile, `subtitles/${Date.now()}.vtt`, 'text/vtt');
+             }
+             const taskId = `edit-ep-${Date.now().toString()}-${ep.id}`;
+             setUploadTasks(prev => [{ id: taskId, title: `Update S${ep.season_number}E${ep.episode_number}`, type: 'Episode', progress: 0, status: 'uploading', message: 'Starting...' }, ...prev]);
+             uploadVideoToMux(ep.newVideoFile, taskId, epSubUrl, `episodes:${ep.id}`).catch(e => updateTask(taskId, {status: 'error', message: e.message}));
+          }
+        });
+        
         const results = await Promise.all(episodeUpdates);
-        if (results.find(r => r.error)) throw results.find(r => r.error)?.error;
       }
+      
       Alert.alert("Success", "Content updated!"); setEditingMovie(null); fetchAllMovies();
     } catch (error: any) { Alert.alert("Error", error.message); } finally { setEditSaving(false); }
   };
 
-  const updateLocalEpisode = (id: string, field: string, value: string) => { setEditEpisodes(prev => prev.map(ep => ep.id === id ? { ...ep, [field]: value } : ep)); };
+  const updateLocalEpisode = (id: string, field: string, value: any) => { setEditEpisodes(prev => prev.map(ep => ep.id === id ? { ...ep, [field]: value } : ep)); };
   
   const handleDeleteEpisode = async (epId: string) => {
     if (Platform.OS === 'web' ? window.confirm("Move to trash?") : true) { await supabase.from('episodes').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', epId); setEditEpisodes(prev => prev.filter(e => e.id !== epId)); fetchAllMovies(); }
@@ -569,7 +627,11 @@ export default function AdminScreen() {
                 <Text style={styles.label}>Select TV Series *</Text>
                 {loadingSeries ? <ActivityIndicator color="#e50914" /> : (
                   <ScrollView style={styles.episodeSeriesList} nestedScrollEnabled>
-                    {tvSeries.map(s => (<Pressable key={s.id} style={[styles.seriesItem, selectedSeriesId === s.id && styles.seriesItemSelected]} onPress={() => setSelectedSeriesId(s.id)}><Text style={styles.seriesItemText}>{s.title}</Text></Pressable>))}
+                    {tvSeries.length === 0 ? (
+                      <Text style={{ color: '#888', padding: 10 }}>No TV Series found. Create one first.</Text>
+                    ) : (
+                      tvSeries.map(s => (<Pressable key={s.id} style={[styles.seriesItem, selectedSeriesId === s.id && styles.seriesItemSelected]} onPress={() => setSelectedSeriesId(s.id)}><Text style={styles.seriesItemText}>{s.title}</Text></Pressable>))
+                    )}
                   </ScrollView>
                 )}
                 <View style={{flexDirection: 'row', gap: 10}}>
@@ -614,7 +676,6 @@ export default function AdminScreen() {
         {/* --- MANAGE SECTION --- */}
         {activeSection === 'manage' && (
           <View>
-            {/* ---> UPDATED: Hidden Bulk Action Bar from Managers <--- */}
             {selectedManageIds.length > 0 && !editingMovie && userRole === 'super_admin' && (
               <View style={styles.bulkActionBar}>
                 <Text style={styles.bulkActionText}>{selectedManageIds.length} Selected</Text>
@@ -649,13 +710,32 @@ export default function AdminScreen() {
                             <Ionicons name="videocam" size={20} color={editVideoFile ? '#22c55e' : '#e50914'} />
                             <Text style={styles.selectButtonText}>{editVideoFile ? `Queued: ${editVideoFile.name}` : 'Upload Replacement Video'}</Text>
                          </Pressable>
-                         {editVideoFile && <Text style={{ color: '#eab308', fontSize: 12, marginTop: 6 }}>Warning: Saving will immediately overwrite the existing video.</Text>}
+                         
+                         <Pressable style={[styles.selectButton, { borderColor: editSubtitleFile ? '#22c55e' : '#333', backgroundColor: '#181818', marginTop: 10 }]} onPress={pickEditSubtitle}>
+                            <Ionicons name="text" size={20} color={editSubtitleFile ? '#22c55e' : '#888'} />
+                            <Text style={styles.selectButtonText}>{editSubtitleFile ? `Queued: ${editSubtitleFile.name}` : 'Attach Subtitles (.vtt / .srt)'}</Text>
+                         </Pressable>
+
+                         {(editSubtitleFile || editVideoFile) && <Text style={{ color: '#eab308', fontSize: 12, marginTop: 6 }}>Note: Attaching subtitles requires a replacement video to process together.</Text>}
                       </View>
                     )}
                     
                     {editingMovie.type === 'TV Series' && (
                       <View style={styles.episodeManager}>
-                        <Text style={styles.label}>Episodes</Text>
+                        <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15}}>
+                           <Text style={[styles.label, {marginBottom: 0}]}>Episodes</Text>
+                           {/* ---> NEW: Add New Episode Bridge Button <--- */}
+                           <Pressable style={styles.addEpButton} onPress={() => {
+                              setActiveSection('upload');
+                              setUploadMode('episode');
+                              setSelectedSeriesId(editingMovie.id);
+                              setEditingMovie(null);
+                           }}>
+                             <Ionicons name="add-circle-outline" size={16} color="#fff" />
+                             <Text style={styles.addEpButtonText}>Add Episode</Text>
+                           </Pressable>
+                        </View>
+
                         {loadingEpisodes ? <ActivityIndicator color="#e50914" /> : (
                           editEpisodes.map(ep => (
                             <View key={ep.id} style={styles.epEditCard}>
@@ -665,13 +745,26 @@ export default function AdminScreen() {
                                   <TextInput style={[styles.inputSmall, {flex: 1}]} value={ep.season_number.toString()} onChangeText={(val) => updateLocalEpisode(ep.id, 'season_number', val)} keyboardType="numeric" />
                                   <Text style={{color: '#888', alignSelf: 'center'}}>E:</Text>
                                   <TextInput style={[styles.inputSmall, {flex: 1}]} value={ep.episode_number.toString()} onChangeText={(val) => updateLocalEpisode(ep.id, 'episode_number', val)} keyboardType="numeric" />
-                                  {/* ---> UPDATED: Hidden Episode Trash Button from Managers <--- */}
                                   {userRole === 'super_admin' && (
                                     <Pressable style={{justifyContent: 'center'}} onPress={() => handleDeleteEpisode(ep.id)}>
                                       <Ionicons name="trash-outline" size={20} color="#e50914" />
                                     </Pressable>
                                   )}
                                 </View>
+
+                                <View style={{flexDirection: 'row', gap: 10, marginTop: 10}}>
+                                   <Pressable style={[styles.selectButtonSmall, { flex: 1, borderColor: ep.newVideoFile ? '#22c55e' : '#333' }]} onPress={() => pickEpisodeEditVideo(ep.id)}>
+                                      <Ionicons name="videocam" size={16} color={ep.newVideoFile ? '#22c55e' : '#888'} />
+                                      <Text style={[styles.selectButtonText, {fontSize: 12}]} numberOfLines={1}>{ep.newVideoFile ? ep.newVideoFile.name : 'Replace Video'}</Text>
+                                   </Pressable>
+                                   <Pressable style={[styles.selectButtonSmall, { flex: 1, borderColor: ep.newSubtitleFile ? '#22c55e' : '#333' }]} onPress={() => pickEpisodeEditSubtitle(ep.id)}>
+                                      <Ionicons name="text" size={16} color={ep.newSubtitleFile ? '#22c55e' : '#888'} />
+                                      <Text style={[styles.selectButtonText, {fontSize: 12}]} numberOfLines={1}>{ep.newSubtitleFile ? ep.newSubtitleFile.name : '+ Subtitles'}</Text>
+                                   </Pressable>
+                                </View>
+                                {ep.newSubtitleFile && !ep.newVideoFile && (
+                                   <Text style={{ color: '#eab308', fontSize: 11, marginTop: 6 }}>Note: Requires a replacement video to process subtitles.</Text>
+                                )}
                             </View>
                           ))
                         )}
@@ -685,7 +778,6 @@ export default function AdminScreen() {
                 ) : (
                   activeMovies.map(m => (
                     <View key={m.id} style={styles.manageItem}>
-                      {/* ---> UPDATED: Hidden Bulk Select Checkboxes from Managers <--- */}
                       {userRole === 'super_admin' && (
                         <Pressable style={styles.checkboxZone} onPress={() => toggleManageSelection(m.id)}>
                           <Ionicons name={selectedManageIds.includes(m.id) ? "checkbox" : "square-outline"} size={22} color={selectedManageIds.includes(m.id) ? "#e50914" : "#666"} />
@@ -699,7 +791,6 @@ export default function AdminScreen() {
                       
                       <View style={styles.manageActions}>
                         <Pressable style={[styles.manageButton, styles.manageButtonSecondary]} onPress={() => startEditing(m)}><Text style={styles.manageButtonText}>Edit</Text></Pressable>
-                        {/* ---> UPDATED: Hidden Trash Button from Managers <--- */}
                         {userRole === 'super_admin' && (
                           <Pressable style={[styles.manageButton, styles.manageButtonTrash]} onPress={() => handleTrashMovie(m.id)}>
                             {updatingId === m.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Trash</Text>}
@@ -889,6 +980,8 @@ const styles = StyleSheet.create({
   editCancelButtonText: { color: '#fff', fontWeight: 'bold' },
   editSaveButton: { flex: 1, padding: 12, backgroundColor: '#e50914', borderRadius: 8, alignItems: 'center' },
   editSaveButtonText: { color: '#fff', fontWeight: 'bold' },
+  addEpButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#e50914', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, gap: 6 },
+  addEpButtonText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
   bulkActionBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#1f1f1f', padding: 15, borderRadius: 10, marginBottom: 15, borderWidth: 1, borderColor: '#333' },
   bulkActionText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
   bulkActionButton: { backgroundColor: '#b91c1c', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8 },

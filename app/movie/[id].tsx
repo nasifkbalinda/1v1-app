@@ -9,7 +9,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-// ---> UPDATED: Added backdrop_url to the Movie type <---
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; backdrop_url?: string | null; video_url: string | null; category: string | null; type: string | null; };
 type Episode = { id: string; season_number: number; episode_number: number; title: string; video_url: string | null; };
 
@@ -102,6 +101,9 @@ export default function TheaterScreen() {
   const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
   
   const [activeEpisode, setActiveEpisode] = useState<Episode | null>(null);
+  
+  // ---> NEW: Season Dropdown State <---
+  const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
 
   const [isDownloaded, setIsDownloaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -126,6 +128,10 @@ export default function TheaterScreen() {
         if (movieData.type === 'TV Series') {
           const { data: epData } = await supabase.from('episodes').select('*').eq('movie_id', id).eq('status', 'active').order('season_number').order('episode_number');
           setEpisodes(epData || []);
+          // Automatically select the first available season
+          if (epData && epData.length > 0) {
+             setSelectedSeason(epData[0].season_number);
+          }
         }
 
         const { data: simData } = await supabase.from('movies')
@@ -178,6 +184,7 @@ export default function TheaterScreen() {
       if (!activeEpisode) {
         setCurrentVideoUrl(episodes[0].video_url);
         setActiveEpisode(episodes[0]);
+        setSelectedSeason(episodes[0].season_number); // Update season UI
       }
     } else {
       setCurrentVideoUrl(movie?.video_url || null);
@@ -200,9 +207,15 @@ export default function TheaterScreen() {
       const nextEp = episodes[currentIndex + 1];
       setCurrentVideoUrl(nextEp.video_url);
       setActiveEpisode(nextEp);
+      setSelectedSeason(nextEp.season_number); // Automatically switch the season tab if needed
       setIsPlaying(true);
     }
   };
+
+  // ---> NEW: Calculate unique seasons for the UI <---
+  const availableSeasons = Array.from(new Set(episodes.map(e => e.season_number))).sort((a,b) => a-b);
+  // ---> NEW: Filter episodes to only show the selected season <---
+  const displayedEpisodes = episodes.filter(ep => ep.season_number === selectedSeason);
 
   const gridColumns = isDesktop ? 6 : (width > 550 ? 4 : 2);
   const gridGap = 10;
@@ -225,7 +238,6 @@ export default function TheaterScreen() {
           <VideoPlayerBlock url={currentVideoUrl} movieId={movie.id} userId={userId} initialTime={0} onError={()=>{}} />
         ) : (
           <View style={styles.posterBox}>
-            {/* ---> UPDATED: Uses backdrop_url if available, with 'cover' scaling <--- */}
             <Image source={{ uri: movie.backdrop_url || movie.poster_url }} style={styles.mainPoster} resizeMode="cover" />
             <Pressable style={styles.playOverlay} onPress={handlePlayMain}>
               <Ionicons name="play" size={60} color="#fff" />
@@ -272,10 +284,28 @@ export default function TheaterScreen() {
 
           <Text style={styles.description}>{movie.description}</Text>
 
-          {movie.type === 'TV Series' && episodes.length > 0 && (
+          {movie.type === 'TV Series' && availableSeasons.length > 0 && (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Episodes</Text>
-              {episodes.map(ep => {
+              
+              {/* ---> NEW: Season Pill Selector UI <--- */}
+              <View style={styles.seasonSelectorContainer}>
+                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
+                   {availableSeasons.map(seasonNum => (
+                      <Pressable 
+                        key={`season-${seasonNum}`} 
+                        style={[styles.seasonPill, selectedSeason === seasonNum && styles.activeSeasonPill]}
+                        onPress={() => setSelectedSeason(seasonNum)}
+                      >
+                        <Text style={[styles.seasonPillText, selectedSeason === seasonNum && styles.activeSeasonPillText]}>
+                           Season {seasonNum}
+                        </Text>
+                      </Pressable>
+                   ))}
+                 </ScrollView>
+              </View>
+
+              {/* Only maps through the episodes belonging to the Selected Season */}
+              {displayedEpisodes.map(ep => {
                 const isActive = activeEpisode?.id === ep.id;
                 return (
                   <Pressable 
@@ -331,9 +361,7 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   videoContainer: { width: '100%', maxWidth: 960, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#000', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
   posterBox: { width: '100%', maxWidth: 960, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#111', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
-  // ---> UPDATED: Removed opacity for a crisp image <---
   mainPoster: { width: '100%', height: '100%' },
-  // ---> UPDATED: Added a subtle black tint overlay so the play button stands out <---
   playOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)' },
   details: { padding: 20, maxWidth: 960, alignSelf: 'center', width: '100%' },
   title: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
@@ -349,6 +377,14 @@ const styles = StyleSheet.create({
   description: { color: '#ccc', fontSize: 14, lineHeight: 22, marginTop: 10 },
   section: { marginTop: 40 },
   sectionTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 15 },
+  
+  // ---> NEW: Season UI Styles <---
+  seasonSelectorContainer: { marginBottom: 20 },
+  seasonPill: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 999, backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333' },
+  activeSeasonPill: { backgroundColor: '#e50914', borderColor: '#e50914' },
+  seasonPillText: { color: '#888', fontWeight: 'bold', fontSize: 14 },
+  activeSeasonPillText: { color: '#fff' },
+
   epRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', padding: 15, borderRadius: 8, marginBottom: 10, borderWidth: 1, borderColor: 'transparent' },
   activeEpRow: { backgroundColor: '#1a0a0b', borderColor: '#e50914' },
   epInfo: { flex: 1 },
