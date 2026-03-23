@@ -184,11 +184,9 @@ export default function AdminScreen() {
     }
   };
 
-  // ---> UPDATED: Error catching to prevent silent UI failures <---
   const fetchAllMovies = useCallback(async () => { 
     setManageLoading(true); 
     
-    // Fetch Movies
     const { data: mData, error: mError } = await supabase.from('movies').select('*, profiles(email)').order('title'); 
     if (mError) {
       console.error("Error fetching movies:", mError.message);
@@ -196,7 +194,6 @@ export default function AdminScreen() {
     }
     setManageMovies(mData ?? []); 
     
-    // Fetch Episodes
     const { data: eData, error: eError } = await supabase.from('episodes').select('*, movies(title), profiles(email)').eq('status', 'trash').order('season_number'); 
     if (eError) {
       console.error("Error fetching episodes:", eError.message);
@@ -398,7 +395,6 @@ export default function AdminScreen() {
   };
 
   const fetchTvSeries = useCallback(async () => { setLoadingSeries(true); const { data } = await supabase.from('movies').select('id, title').eq('type', 'TV Series').eq('status', 'active').order('title'); setTvSeries(data ?? []); setLoadingSeries(false); }, []);
-  useEffect(() => { if (uploadMode === 'episode') fetchTvSeries(); }, [uploadMode, fetchTvSeries]);
 
   const startEditing = async (movie: any) => {
     setEditingMovie(movie); setEditTitle(movie.title); setEditDescription(movie.description || ''); setEditCategory(movie.category || ''); setEditPosterUrl(movie.poster_url || ''); setEditBackdropUrl(movie.backdrop_url || ''); setEditVideoUrl(movie.video_url || '');
@@ -434,6 +430,7 @@ export default function AdminScreen() {
   };
 
   const updateLocalEpisode = (id: string, field: string, value: string) => { setEditEpisodes(prev => prev.map(ep => ep.id === id ? { ...ep, [field]: value } : ep)); };
+  
   const handleDeleteEpisode = async (epId: string) => {
     if (Platform.OS === 'web' ? window.confirm("Move to trash?") : true) { await supabase.from('episodes').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', epId); setEditEpisodes(prev => prev.filter(e => e.id !== epId)); fetchAllMovies(); }
   };
@@ -617,7 +614,8 @@ export default function AdminScreen() {
         {/* --- MANAGE SECTION --- */}
         {activeSection === 'manage' && (
           <View>
-            {selectedManageIds.length > 0 && !editingMovie && (
+            {/* ---> UPDATED: Hidden Bulk Action Bar from Managers <--- */}
+            {selectedManageIds.length > 0 && !editingMovie && userRole === 'super_admin' && (
               <View style={styles.bulkActionBar}>
                 <Text style={styles.bulkActionText}>{selectedManageIds.length} Selected</Text>
                 <Pressable style={styles.bulkActionButton} onPress={handleBulkTrash}><Text style={styles.bulkActionButtonText}>Trash Selected</Text></Pressable>
@@ -667,7 +665,12 @@ export default function AdminScreen() {
                                   <TextInput style={[styles.inputSmall, {flex: 1}]} value={ep.season_number.toString()} onChangeText={(val) => updateLocalEpisode(ep.id, 'season_number', val)} keyboardType="numeric" />
                                   <Text style={{color: '#888', alignSelf: 'center'}}>E:</Text>
                                   <TextInput style={[styles.inputSmall, {flex: 1}]} value={ep.episode_number.toString()} onChangeText={(val) => updateLocalEpisode(ep.id, 'episode_number', val)} keyboardType="numeric" />
-                                  <Pressable style={{justifyContent: 'center'}} onPress={() => handleDeleteEpisode(ep.id)}><Ionicons name="trash-outline" size={20} color="#e50914" /></Pressable>
+                                  {/* ---> UPDATED: Hidden Episode Trash Button from Managers <--- */}
+                                  {userRole === 'super_admin' && (
+                                    <Pressable style={{justifyContent: 'center'}} onPress={() => handleDeleteEpisode(ep.id)}>
+                                      <Ionicons name="trash-outline" size={20} color="#e50914" />
+                                    </Pressable>
+                                  )}
                                 </View>
                             </View>
                           ))
@@ -682,16 +685,26 @@ export default function AdminScreen() {
                 ) : (
                   activeMovies.map(m => (
                     <View key={m.id} style={styles.manageItem}>
-                      <Pressable style={styles.checkboxZone} onPress={() => toggleManageSelection(m.id)}>
-                        <Ionicons name={selectedManageIds.includes(m.id) ? "checkbox" : "square-outline"} size={22} color={selectedManageIds.includes(m.id) ? "#e50914" : "#666"} />
-                      </Pressable>
+                      {/* ---> UPDATED: Hidden Bulk Select Checkboxes from Managers <--- */}
+                      {userRole === 'super_admin' && (
+                        <Pressable style={styles.checkboxZone} onPress={() => toggleManageSelection(m.id)}>
+                          <Ionicons name={selectedManageIds.includes(m.id) ? "checkbox" : "square-outline"} size={22} color={selectedManageIds.includes(m.id) ? "#e50914" : "#666"} />
+                        </Pressable>
+                      )}
+                      
                       <View style={styles.manageInfo}>
                         <Text style={styles.manageTitle}>{m.title}</Text>
                         <Text style={styles.manageMeta}>{m.type} • Uploaded by: {m.profiles?.email || 'Super Admin'}</Text>
                       </View>
+                      
                       <View style={styles.manageActions}>
                         <Pressable style={[styles.manageButton, styles.manageButtonSecondary]} onPress={() => startEditing(m)}><Text style={styles.manageButtonText}>Edit</Text></Pressable>
-                        <Pressable style={[styles.manageButton, styles.manageButtonTrash]} onPress={() => handleTrashMovie(m.id)}>{updatingId === m.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Trash</Text>}</Pressable>
+                        {/* ---> UPDATED: Hidden Trash Button from Managers <--- */}
+                        {userRole === 'super_admin' && (
+                          <Pressable style={[styles.manageButton, styles.manageButtonTrash]} onPress={() => handleTrashMovie(m.id)}>
+                            {updatingId === m.id ? <ActivityIndicator size="small" color="#fff"/> : <Text style={styles.manageButtonText}>Trash</Text>}
+                          </Pressable>
+                        )}
                       </View>
                     </View>
                   ))
