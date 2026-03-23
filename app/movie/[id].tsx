@@ -100,7 +100,6 @@ export default function TheaterScreen() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
   
-  // ---> NEW: Track which episode is currently active <---
   const [activeEpisode, setActiveEpisode] = useState<Episode | null>(null);
 
   const [isDownloaded, setIsDownloaded] = useState(false);
@@ -128,7 +127,14 @@ export default function TheaterScreen() {
           setEpisodes(epData || []);
         }
 
-        const { data: simData } = await supabase.from('movies').select('*').eq('category', movieData.category).neq('id', id).limit(6);
+        // ---> FIXED: Now correctly filters out trashed movies using .eq('status', 'active') <---
+        const { data: simData } = await supabase.from('movies')
+          .select('*')
+          .eq('category', movieData.category)
+          .eq('status', 'active')
+          .neq('id', id)
+          .limit(6);
+          
         setSimilarMovies(simData || []);
 
         const downloaded = await isMovieDownloaded(id);
@@ -167,7 +173,6 @@ export default function TheaterScreen() {
     finally { setIsDownloading(false); setDownloadProgress(null); }
   };
 
-  // ---> NEW: Intelligent Play Handlers <---
   const handlePlayMain = () => {
     if (movie?.type === 'TV Series' && episodes.length > 0) {
       if (!activeEpisode) {
@@ -199,12 +204,10 @@ export default function TheaterScreen() {
     }
   };
 
-  // ---> NEW: Dynamic Responsive Grid Math <---
   const gridColumns = isDesktop ? 6 : (width > 550 ? 4 : 2);
   const gridGap = 10;
-  const gridPadding = 40; // 20px padding on left and right of the details container
+  const gridPadding = 40; 
   const safeCardWidth = (width - gridPadding - (gridGap * (gridColumns - 1))) / gridColumns;
-  // Ensure it doesn't get ridiculously wide on ultra-wide screens
   const finalCardWidth = Math.min(safeCardWidth, 160);
 
   if (loading) return <View style={styles.container}><ActivityIndicator size="large" color="#e50914" /></View>;
@@ -232,7 +235,6 @@ export default function TheaterScreen() {
         <View style={styles.details}>
           <Text style={styles.title}>{movie.title}</Text>
           
-          {/* ---> NEW: Active Episode Title Overlay <--- */}
           {activeEpisode && isPlaying && (
             <Text style={styles.activeEpisodeTitle}>
               Now Playing: S{activeEpisode.season_number} E{activeEpisode.episode_number} - {activeEpisode.title}
@@ -247,7 +249,6 @@ export default function TheaterScreen() {
               <Text style={styles.playBtnText}>{isPlaying ? 'Playing' : 'Play'}</Text>
             </Pressable>
 
-            {/* ---> NEW: Next Episode Button <--- */}
             {hasNextEpisode && isPlaying && (
                <Pressable style={styles.nextBtn} onPress={handleNextEpisode}>
                  <Ionicons name="play-skip-forward" size={20} color="#fff" />
