@@ -101,8 +101,6 @@ export default function TheaterScreen() {
   const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
   
   const [activeEpisode, setActiveEpisode] = useState<Episode | null>(null);
-  
-  // ---> NEW: State to track which Season accordion is currently open <---
   const [expandedSeason, setExpandedSeason] = useState<number | null>(null);
 
   const [isDownloaded, setIsDownloaded] = useState(false);
@@ -128,7 +126,6 @@ export default function TheaterScreen() {
         if (movieData.type === 'TV Series') {
           const { data: epData } = await supabase.from('episodes').select('*').eq('movie_id', id).eq('status', 'active').order('season_number').order('episode_number');
           setEpisodes(epData || []);
-          // Automatically expand the first available season
           if (epData && epData.length > 0) {
              setExpandedSeason(epData[0].season_number);
           }
@@ -151,8 +148,30 @@ export default function TheaterScreen() {
     fetchData();
   }, [id]);
 
+  // ---> NEW: The Authentication Gatekeeper <---
+  const ensureAuthenticated = () => {
+    if (!userId) {
+      if (Platform.OS === 'web') {
+        window.alert("Please log in or create an account to access this feature.");
+        router.push('/');
+      } else {
+        Alert.alert(
+          "Login Required", 
+          "Please log in or create an account to access this feature.", 
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Log In", onPress: () => router.push('/') }
+          ]
+        );
+      }
+      return false;
+    }
+    return true;
+  };
+
   const toggleWatchlist = async () => {
-    if (!userId || !movie) return;
+    if (!ensureAuthenticated()) return;
+    if (!movie) return;
     try {
       if (isInMyList) { await supabase.from('watchlist').delete().eq('user_id', userId).eq('movie_id', movie.id); setIsInMyList(false); } 
       else { await supabase.from('watchlist').insert({ user_id: userId, movie_id: movie.id }); setIsInMyList(true); }
@@ -160,6 +179,7 @@ export default function TheaterScreen() {
   };
 
   const handleDownload = async () => {
+    if (!ensureAuthenticated()) return;
     if (!movie || isDownloading || isDownloaded) return;
     const activeUrl = currentVideoUrl || movie.video_url;
     if (!activeUrl) return;
@@ -180,6 +200,8 @@ export default function TheaterScreen() {
   };
 
   const handlePlayMain = () => {
+    if (!ensureAuthenticated()) return;
+    
     if (movie?.type === 'TV Series' && episodes.length > 0) {
       if (!activeEpisode) {
         setCurrentVideoUrl(episodes[0].video_url);
@@ -193,6 +215,8 @@ export default function TheaterScreen() {
   };
 
   const handlePlayEpisode = (ep: Episode) => {
+    if (!ensureAuthenticated()) return;
+
     setCurrentVideoUrl(ep.video_url);
     setActiveEpisode(ep);
     setIsPlaying(true);
@@ -201,13 +225,15 @@ export default function TheaterScreen() {
   const hasNextEpisode = activeEpisode ? episodes.findIndex(e => e.id === activeEpisode.id) < episodes.length - 1 : false;
   
   const handleNextEpisode = () => {
+    if (!ensureAuthenticated()) return;
+
     if (!activeEpisode) return;
     const currentIndex = episodes.findIndex(e => e.id === activeEpisode.id);
     if (currentIndex !== -1 && currentIndex < episodes.length - 1) {
       const nextEp = episodes[currentIndex + 1];
       setCurrentVideoUrl(nextEp.video_url);
       setActiveEpisode(nextEp);
-      setExpandedSeason(nextEp.season_number); // Auto-expand the season if we roll over to a new one
+      setExpandedSeason(nextEp.season_number);
       setIsPlaying(true);
     }
   };
@@ -243,7 +269,6 @@ export default function TheaterScreen() {
         )}
 
         <View style={styles.details}>
-          {/* ---> UPDATED: Added selectable={false} to prevent text selection and address mapping <--- */}
           <Text style={styles.title} selectable={false}>{movie.title}</Text>
           
           {activeEpisode && isPlaying && (
@@ -286,7 +311,6 @@ export default function TheaterScreen() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle} selectable={false}>Episodes</Text>
               
-              {/* ---> NEW: Vertical Season Accordion <--- */}
               {availableSeasons.map(seasonNum => {
                 const isExpanded = expandedSeason === seasonNum;
                 const seasonEpisodes = episodes.filter(ep => ep.season_number === seasonNum);
@@ -312,7 +336,6 @@ export default function TheaterScreen() {
                               onPress={() => handlePlayEpisode(ep)}
                             >
                               <View style={styles.epInfo}>
-                                {/* ---> UPDATED: Cleaner title formatting <--- */}
                                 <Text style={[styles.epTitle, isActive && { color: '#e50914', fontWeight: 'bold' }]} selectable={false}>
                                   {ep.episode_number}. {ep.title}
                                 </Text>
@@ -379,7 +402,6 @@ const styles = StyleSheet.create({
   section: { marginTop: 40 },
   sectionTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 15 },
   
-  // ---> NEW: Accordion Styles <---
   seasonAccordion: { marginBottom: 10, backgroundColor: '#111', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#222' },
   seasonHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15, backgroundColor: '#1a1a1a' },
   seasonHeaderText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
