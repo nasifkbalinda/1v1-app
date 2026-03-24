@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
+import * as Upchunk from '@mux/upchunk'; // ---> NEW: Imported Upchunk engine
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
@@ -49,7 +50,8 @@ export default function AdminScreen() {
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
   const [tvSeriesUploading, setTvSeriesUploading] = useState(false);
   
-  const xhrRefs = useRef<{ [key: string]: XMLHttpRequest }>({});
+  // ---> UPDATED: Now holds the Upchunk upload objects instead of XHR <---
+  const uploadRefs = useRef<{ [key: string]: any }>({});
 
   const [manageMovies, setManageMovies] = useState<any[]>([]);
   const [trashedEpisodes, setTrashedEpisodes] = useState<any[]>([]); 
@@ -210,9 +212,12 @@ export default function AdminScreen() {
   const updateTask = (id: string, updates: Partial<UploadTask>) => { setUploadTasks(prev => prev.map(task => task.id === id ? { ...task, ...updates } : task)); };
   const removeTask = (id: string) => { setUploadTasks(prev => prev.filter(task => task.id !== id)); };
 
+  // ---> UPDATED: Uses Upchunk's pause feature to securely stop the upload without crashing <---
   const handleCancelTask = (taskId: string) => {
-    if (xhrRefs.current[taskId]) {
-      xhrRefs.current[taskId].abort();
+    if (uploadRefs.current[taskId]) {
+      uploadRefs.current[taskId].pause();
+      delete uploadRefs.current[taskId];
+      updateTask(taskId, { status: 'error', message: 'Upload Cancelled by User' });
     } else {
       updateTask(taskId, { status: 'error', message: 'Upload Cancelled by User' });
     }
@@ -287,9 +292,15 @@ export default function AdminScreen() {
     return supabase.storage.from('movies').getPublicUrl(data.path).data.publicUrl;
   };
 
+  // ---> MASSIVE UPGRADE: Powered by Upchunk to prevent memory crashing on massive GB files <---
   const uploadVideoToMux = async (fileObj: any, taskId: string, subtitleUrl?: string | null, passthrough?: string): Promise<void> => {
-    let blob = fileObj.file;
-    if (!blob) { const response = await fetch(fileObj.uri); blob = await response.blob(); }
+    let fileToUpload = fileObj.file;
+    
+    // Fallback: If it's not a direct File object, we have to fetch it (only usually needed on mobile native apps, not web)
+    if (!fileToUpload) { 
+      const response = await fetch(fileObj.uri); 
+      fileToUpload = await response.blob(); 
+    }
     
     updateTask(taskId, { message: 'Connecting to secure backend...' });
 
@@ -318,34 +329,28 @@ export default function AdminScreen() {
     if (!muxUpload.data?.url) throw new Error(`No Upload URL provided by Mux`);
     
     return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhrRefs.current[taskId] = xhr;
-      
-      xhr.open('PUT', muxUpload.data.url);
-      xhr.upload.onprogress = (event) => { 
-        if (event.lengthComputable) { 
-          updateTask(taskId, { progress: Math.round((event.loaded / event.total) * 100), message: `Uploading Video: ${Math.round((event.loaded / event.total) * 100)}%` }); 
-        } 
-      };
-      xhr.onload = () => { 
-        delete xhrRefs.current[taskId];
-        if (xhr.status >= 200 && xhr.status < 300) { 
-          updateTask(taskId, { status: 'done', progress: 100, message: 'Upload Complete!' }); 
-          resolve(); 
-        } else { 
-          reject(new Error(`Failed (${xhr.status})`)); 
-        } 
-      };
-      xhr.onerror = () => { 
-        delete xhrRefs.current[taskId];
-        reject(new Error(`Network error`)); 
-      };
-      xhr.onabort = () => {
-        delete xhrRefs.current[taskId];
-        reject(new Error(`Upload Cancelled by User`));
-      };
+      const upload = Upchunk.createUpload({
+        endpoint: muxUpload.data.url,
+        file: fileToUpload,
+        chunkSize: 5120, // This slices the 2GB file into tiny 5MB chunks!
+      });
 
-      xhr.send(blob);
+      uploadRefs.current[taskId] = upload;
+
+      upload.on('progress', (progress) => {
+        updateTask(taskId, { progress: Math.round(progress.detail), message: `Uploading Video: ${Math.round(progress.detail)}%` });
+      });
+
+      upload.on('success', () => {
+        delete uploadRefs.current[taskId];
+        updateTask(taskId, { status: 'done', progress: 100, message: 'Upload Complete!' });
+        resolve();
+      });
+
+      upload.on('error', (err) => {
+        delete uploadRefs.current[taskId];
+        reject(new Error(err.detail || 'Upload failed'));
+      });
     });
   };
 
@@ -418,12 +423,7 @@ export default function AdminScreen() {
     } catch(e: any) { Alert.alert("Error", e.message); } finally { setTvSeriesUploading(false); }
   };
 
-  const fetchTvSeries = useCallback(async () => { 
-    setLoadingSeries(true); 
-    const { data } = await supabase.from('movies').select('id, title').eq('type', 'TV Series').eq('status', 'active').order('title'); 
-    setTvSeries(data ?? []); 
-    setLoadingSeries(false); 
-  }, []);
+  const fetchTvSeries = useCallback(async () => { setLoadingSeries(true); const { data } = await supabase.from('movies').select('id, title').eq('type', 'TV Series').eq('status', 'active').order('title'); setTvSeries(data ?? []); setLoadingSeries(false); }, []);
   useEffect(() => { if (uploadMode === 'episode') fetchTvSeries(); }, [uploadMode, fetchTvSeries]);
 
   const startEditing = async (movie: any) => {
@@ -724,7 +724,6 @@ export default function AdminScreen() {
                       <View style={styles.episodeManager}>
                         <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15}}>
                            <Text style={[styles.label, {marginBottom: 0}]}>Episodes</Text>
-                           {/* ---> NEW: Add New Episode Bridge Button <--- */}
                            <Pressable style={styles.addEpButton} onPress={() => {
                               setActiveSection('upload');
                               setUploadMode('episode');
