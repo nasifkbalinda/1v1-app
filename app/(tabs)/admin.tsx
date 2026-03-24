@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
-import * as Upchunk from '@mux/upchunk'; // ---> NEW: Imported Upchunk engine
+import * as Upchunk from '@mux/upchunk';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
@@ -50,7 +50,6 @@ export default function AdminScreen() {
   const [uploadTasks, setUploadTasks] = useState<UploadTask[]>([]);
   const [tvSeriesUploading, setTvSeriesUploading] = useState(false);
   
-  // ---> UPDATED: Now holds the Upchunk upload objects instead of XHR <---
   const uploadRefs = useRef<{ [key: string]: any }>({});
 
   const [manageMovies, setManageMovies] = useState<any[]>([]);
@@ -212,7 +211,6 @@ export default function AdminScreen() {
   const updateTask = (id: string, updates: Partial<UploadTask>) => { setUploadTasks(prev => prev.map(task => task.id === id ? { ...task, ...updates } : task)); };
   const removeTask = (id: string) => { setUploadTasks(prev => prev.filter(task => task.id !== id)); };
 
-  // ---> UPDATED: Uses Upchunk's pause feature to securely stop the upload without crashing <---
   const handleCancelTask = (taskId: string) => {
     if (uploadRefs.current[taskId]) {
       uploadRefs.current[taskId].pause();
@@ -231,15 +229,18 @@ export default function AdminScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
     if (!result.canceled) setBackdropFile({ uri: result.assets[0].uri, name: result.assets[0].fileName ?? `backdrop.jpg`, mimeType: result.assets[0].mimeType ?? 'image/jpeg', file: (result.assets[0] as any).file });
   };
+  
+  // ---> MASSIVE FIX: Disabled copyToCacheDirectory for all videos to prevent RAM crashes <---
   const pickVideo = async (isEpisode: boolean = false) => {
-    const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: true });
+    const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: false });
     if (!result.canceled) {
       const fd = { uri: result.assets[0].uri, name: result.assets[0].name, mimeType: result.assets[0].mimeType ?? 'video/mp4', file: result.assets[0].file };
       if (isEpisode) setEpisodeVideoFile(fd); else setVideoFile(fd);
     }
   };
+  
   const pickSubtitle = async (isEpisode: boolean = false) => {
-    const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
+    const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: false });
     if (!result.canceled) {
       const fd = { uri: result.assets[0].uri, name: result.assets[0].name, mimeType: 'text/vtt', file: result.assets[0].file };
       if (isEpisode) setEpisodeSubtitleFile(fd); else setSubtitleFile(fd);
@@ -257,12 +258,12 @@ export default function AdminScreen() {
   const pickEditVideo = async () => {
     const msg = "Upload New Video? This will replace the current video when saved.";
     if (Platform.OS === 'web' ? !window.confirm(msg) : false) return;
-    const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: true });
+    const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: false });
     if (!result.canceled) setEditVideoFile({ uri: result.assets[0].uri, name: result.assets[0].name, mimeType: result.assets[0].mimeType ?? 'video/mp4', file: result.assets[0].file });
   };
 
   const pickEditSubtitle = async () => {
-    const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
+    const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: false });
     if (!result.canceled) {
       setEditSubtitleFile({ uri: result.assets[0].uri, name: result.assets[0].name, mimeType: 'text/vtt', file: result.assets[0].file });
     }
@@ -271,14 +272,14 @@ export default function AdminScreen() {
   const pickEpisodeEditVideo = async (epId: string) => {
     const msg = "Upload New Video? This will replace the episode's current video.";
     if (Platform.OS === 'web' ? !window.confirm(msg) : false) return;
-    const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: true });
+    const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: false });
     if (!result.canceled) {
       updateLocalEpisode(epId, 'newVideoFile', { uri: result.assets[0].uri, name: result.assets[0].name, mimeType: result.assets[0].mimeType ?? 'video/mp4', file: result.assets[0].file });
     }
   };
 
   const pickEpisodeEditSubtitle = async (epId: string) => {
-    const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
+    const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: false });
     if (!result.canceled) {
       updateLocalEpisode(epId, 'newSubtitleFile', { uri: result.assets[0].uri, name: result.assets[0].name, mimeType: 'text/vtt', file: result.assets[0].file });
     }
@@ -292,12 +293,12 @@ export default function AdminScreen() {
     return supabase.storage.from('movies').getPublicUrl(data.path).data.publicUrl;
   };
 
-  // ---> MASSIVE UPGRADE: Powered by Upchunk to prevent memory crashing on massive GB files <---
   const uploadVideoToMux = async (fileObj: any, taskId: string, subtitleUrl?: string | null, passthrough?: string): Promise<void> => {
     let fileToUpload = fileObj.file;
     
-    // Fallback: If it's not a direct File object, we have to fetch it (only usually needed on mobile native apps, not web)
+    // ---> MASSIVE FIX: Removed the dangerous fetch() fallback on web to prevent RAM crashes <---
     if (!fileToUpload) { 
+      if (Platform.OS === 'web') throw new Error("Native File object missing. Browser cannot safely process this massive file.");
       const response = await fetch(fileObj.uri); 
       fileToUpload = await response.blob(); 
     }
@@ -332,7 +333,7 @@ export default function AdminScreen() {
       const upload = Upchunk.createUpload({
         endpoint: muxUpload.data.url,
         file: fileToUpload,
-        chunkSize: 5120, // This slices the 2GB file into tiny 5MB chunks!
+        chunkSize: 5120, // Slice into 5MB chunks
       });
 
       uploadRefs.current[taskId] = upload;
