@@ -230,8 +230,23 @@ export default function AdminScreen() {
     if (!result.canceled) setBackdropFile({ uri: result.assets[0].uri, name: result.assets[0].fileName ?? `backdrop.jpg`, mimeType: result.assets[0].mimeType ?? 'image/jpeg', file: (result.assets[0] as any).file });
   };
   
-  // ---> MASSIVE FIX: Disabled copyToCacheDirectory for all videos to prevent RAM crashes <---
+  // ---> THE FIX: Bypass Expo DocumentPicker on Web completely using raw HTML5 input <---
   const pickVideo = async (isEpisode: boolean = false) => {
+    if (Platform.OS === 'web') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'video/*';
+      input.onchange = (e: any) => {
+        const file = e.target.files[0];
+        if (file) {
+          const fd = { uri: URL.createObjectURL(file), name: file.name, mimeType: file.type, file: file };
+          if (isEpisode) setEpisodeVideoFile(fd); else setVideoFile(fd);
+        }
+      };
+      input.click();
+      return;
+    }
+
     const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: false });
     if (!result.canceled) {
       const fd = { uri: result.assets[0].uri, name: result.assets[0].name, mimeType: result.assets[0].mimeType ?? 'video/mp4', file: result.assets[0].file };
@@ -255,9 +270,25 @@ export default function AdminScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: false, quality: 1 });
     if (!result.canceled) setEditBackdropFile({ uri: result.assets[0].uri, name: result.assets[0].fileName ?? `edit_backdrop.jpg`, mimeType: result.assets[0].mimeType ?? 'image/jpeg', file: (result.assets[0] as any).file });
   };
+  
+  // ---> THE FIX: Native HTML5 input for editing <---
   const pickEditVideo = async () => {
     const msg = "Upload New Video? This will replace the current video when saved.";
-    if (Platform.OS === 'web' ? !window.confirm(msg) : false) return;
+    if (Platform.OS === 'web') {
+      if (!window.confirm(msg)) return;
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'video/*';
+      input.onchange = (e: any) => {
+        const file = e.target.files[0];
+        if (file) {
+          setEditVideoFile({ uri: URL.createObjectURL(file), name: file.name, mimeType: file.type, file: file });
+        }
+      };
+      input.click();
+      return;
+    }
+
     const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: false });
     if (!result.canceled) setEditVideoFile({ uri: result.assets[0].uri, name: result.assets[0].name, mimeType: result.assets[0].mimeType ?? 'video/mp4', file: result.assets[0].file });
   };
@@ -269,9 +300,24 @@ export default function AdminScreen() {
     }
   };
 
+  // ---> THE FIX: Native HTML5 input for episodes <---
   const pickEpisodeEditVideo = async (epId: string) => {
     const msg = "Upload New Video? This will replace the episode's current video.";
-    if (Platform.OS === 'web' ? !window.confirm(msg) : false) return;
+    if (Platform.OS === 'web') {
+      if (!window.confirm(msg)) return;
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'video/*';
+      input.onchange = (e: any) => {
+        const file = e.target.files[0];
+        if (file) {
+          updateLocalEpisode(epId, 'newVideoFile', { uri: URL.createObjectURL(file), name: file.name, mimeType: file.type, file: file });
+        }
+      };
+      input.click();
+      return;
+    }
+
     const result = await DocumentPicker.getDocumentAsync({ type: 'video/*', copyToCacheDirectory: false });
     if (!result.canceled) {
       updateLocalEpisode(epId, 'newVideoFile', { uri: result.assets[0].uri, name: result.assets[0].name, mimeType: result.assets[0].mimeType ?? 'video/mp4', file: result.assets[0].file });
@@ -296,7 +342,6 @@ export default function AdminScreen() {
   const uploadVideoToMux = async (fileObj: any, taskId: string, subtitleUrl?: string | null, passthrough?: string): Promise<void> => {
     let fileToUpload = fileObj.file;
     
-    // ---> MASSIVE FIX: Removed the dangerous fetch() fallback on web to prevent RAM crashes <---
     if (!fileToUpload) { 
       if (Platform.OS === 'web') throw new Error("Native File object missing. Browser cannot safely process this massive file.");
       const response = await fetch(fileObj.uri); 
@@ -333,7 +378,7 @@ export default function AdminScreen() {
       const upload = Upchunk.createUpload({
         endpoint: muxUpload.data.url,
         file: fileToUpload,
-        chunkSize: 5120, // Slice into 5MB chunks
+        chunkSize: 5120, 
       });
 
       uploadRefs.current[taskId] = upload;
