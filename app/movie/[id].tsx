@@ -3,6 +3,7 @@ import { addDownloadedMovie, isMovieDownloaded } from '@/lib/downloads';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
+import { createDownloadResumable } from 'expo-file-system/legacy'; // ---> THE FIX: Imported from the legacy folder for Expo 54 <---
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
@@ -177,7 +178,6 @@ export default function TheaterScreen() {
     } catch (e) { console.error(e); }
   };
 
-  // ---> MASSIVE UPGRADE: Robust Error Catching for Downloads <---
   const handleDownload = async () => {
     if (!ensureAuthenticated()) return;
     if (!movie || isDownloading || isDownloaded) return;
@@ -188,7 +188,8 @@ export default function TheaterScreen() {
     
     setIsDownloading(true);
     try {
-      const downloadResumable = FileSystem.createDownloadResumable(
+      // ---> THE FIX: Using createDownloadResumable directly from the legacy import <---
+      const downloadResumable = createDownloadResumable(
         mp4Url, 
         `${FileSystem.documentDirectory}${movie.id}.mp4`, 
         {}, 
@@ -199,9 +200,7 @@ export default function TheaterScreen() {
       
       const result = await downloadResumable.downloadAsync();
       
-      // If Mux returns an error (like 403 Forbidden for an old video)
       if (result && result.status >= 400) {
-         // Delete the corrupted tiny error file it downloaded
          await FileSystem.deleteAsync(result.uri, { idempotent: true });
          throw new Error(`Mux Server Error ${result.status}. The MP4 version might not exist for this old video. Try re-uploading the video in the Admin panel.`);
       }
