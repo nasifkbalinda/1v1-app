@@ -148,7 +148,6 @@ export default function TheaterScreen() {
     fetchData();
   }, [id]);
 
-  // ---> NEW: The Authentication Gatekeeper <---
   const ensureAuthenticated = () => {
     if (!userId) {
       if (Platform.OS === 'web') {
@@ -178,25 +177,47 @@ export default function TheaterScreen() {
     } catch (e) { console.error(e); }
   };
 
+  // ---> MASSIVE UPGRADE: Robust Error Catching for Downloads <---
   const handleDownload = async () => {
     if (!ensureAuthenticated()) return;
     if (!movie || isDownloading || isDownloaded) return;
     const activeUrl = currentVideoUrl || movie.video_url;
     if (!activeUrl) return;
+    
     let mp4Url = activeUrl.includes('stream.mux.com') ? (activeUrl.endsWith('.m3u8') ? activeUrl.replace('.m3u8', '/highest.mp4') : `${activeUrl}/highest.mp4`) : activeUrl;
+    
     setIsDownloading(true);
     try {
-      const downloadResumable = FileSystem.createDownloadResumable(mp4Url, `${FileSystem.documentDirectory}${movie.id}.mp4`, {}, (p) => {
-        setDownloadProgress(Math.round((p.totalBytesWritten / p.totalBytesExpectedToWrite) * 100));
-      });
+      const downloadResumable = FileSystem.createDownloadResumable(
+        mp4Url, 
+        `${FileSystem.documentDirectory}${movie.id}.mp4`, 
+        {}, 
+        (p) => {
+          setDownloadProgress(Math.round((p.totalBytesWritten / p.totalBytesExpectedToWrite) * 100));
+        }
+      );
+      
       const result = await downloadResumable.downloadAsync();
+      
+      // If Mux returns an error (like 403 Forbidden for an old video)
+      if (result && result.status >= 400) {
+         // Delete the corrupted tiny error file it downloaded
+         await FileSystem.deleteAsync(result.uri, { idempotent: true });
+         throw new Error(`Mux Server Error ${result.status}. The MP4 version might not exist for this old video. Try re-uploading the video in the Admin panel.`);
+      }
+
       if (result) {
         await addDownloadedMovie({ id: movie.id, title: movie.title, poster_url: movie.poster_url, localUri: result.uri });
         setIsDownloaded(true);
         Alert.alert("Success", "Saved offline.");
       }
-    } catch (e) { Alert.alert("Error", "Download failed."); }
-    finally { setIsDownloading(false); setDownloadProgress(null); }
+    } catch (e: any) { 
+      Alert.alert("Download Error Details", e.message || String(e)); 
+    }
+    finally { 
+      setIsDownloading(false); 
+      setDownloadProgress(null); 
+    }
   };
 
   const handlePlayMain = () => {
