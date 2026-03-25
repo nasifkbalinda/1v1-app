@@ -2,7 +2,7 @@
 import { addDownloadedMovie, isMovieDownloaded } from '@/lib/downloads';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system/legacy'; // ---> THE MAGIC FIX: Pulled the entire system from the legacy folder <---
+import * as FileSystem from 'expo-file-system'; // ---> REVERTED: Back to standard import to fix iOS crash <---
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
@@ -104,7 +104,9 @@ export default function TheaterScreen() {
   const [expandedSeason, setExpandedSeason] = useState<number | null>(null);
 
   const [isDownloaded, setIsDownloaded] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
+  
+  // ---> UPDATED: State to track which specific item (movie or episode ID) is downloading <---
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
 
   const isOfflineMode = Boolean(paramLocalUri);
@@ -177,19 +179,26 @@ export default function TheaterScreen() {
     } catch (e) { console.error(e); }
   };
 
-  const handleDownload = async () => {
+  // ---> UPDATED: Smart Item Download Handler (Works for Movies AND Episodes) <---
+  const handleDownloadItem = async (videoUrl: string | null, targetId: string, title: string, posterUrl: string | null) => {
     if (!ensureAuthenticated()) return;
-    if (!movie || isDownloading || isDownloaded) return;
-    const activeUrl = currentVideoUrl || movie.video_url;
-    if (!activeUrl) return;
+    if (!videoUrl) return;
+    if (downloadingId) {
+      Alert.alert("Wait", "Another download is already in progress.");
+      return;
+    }
     
-    let mp4Url = activeUrl.includes('stream.mux.com') ? (activeUrl.endsWith('.m3u8') ? activeUrl.replace('.m3u8', '/highest.mp4') : `${activeUrl}/highest.mp4`) : activeUrl;
+    let mp4Url = videoUrl.includes('stream.mux.com') ? (videoUrl.endsWith('.m3u8') ? videoUrl.replace('.m3u8', '/highest.mp4') : `${videoUrl}/highest.mp4`) : videoUrl;
     
-    setIsDownloading(true);
+    setDownloadingId(targetId);
+    setDownloadProgress(0);
+
     try {
+      const destPath = `${FileSystem.documentDirectory || FileSystem.cacheDirectory}${targetId}.mp4`;
+      
       const downloadResumable = FileSystem.createDownloadResumable(
         mp4Url, 
-        `${FileSystem.documentDirectory}${movie.id}.mp4`, 
+        destPath, 
         {}, 
         (p) => {
           setDownloadProgress(Math.round((p.totalBytesWritten / p.totalBytesExpectedToWrite) * 100));
@@ -200,19 +209,18 @@ export default function TheaterScreen() {
       
       if (result && result.status >= 400) {
          await FileSystem.deleteAsync(result.uri, { idempotent: true });
-         throw new Error(`Mux Server Error ${result.status}. The MP4 version might not exist for this old video. Try re-uploading the video in the Admin panel.`);
+         throw new Error(`Mux Error ${result.status}. MP4 version not found.`);
       }
 
       if (result) {
-        await addDownloadedMovie({ id: movie.id, title: movie.title, poster_url: movie.poster_url, localUri: result.uri });
-        setIsDownloaded(true);
-        Alert.alert("Success", "Saved offline.");
+        await addDownloadedMovie({ id: targetId, title: title, poster_url: posterUrl, localUri: result.uri });
+        if (targetId === movie?.id) setIsDownloaded(true);
+        Alert.alert("Success", `Downloaded offline.`);
       }
     } catch (e: any) { 
-      Alert.alert("Download Error Details", e.message || String(e)); 
-    }
-    finally { 
-      setIsDownloading(false); 
+      Alert.alert("Download Error", e.message || String(e)); 
+    } finally { 
+      setDownloadingId(null); 
       setDownloadProgress(null); 
     }
   };
@@ -299,26 +307,41 @@ export default function TheaterScreen() {
 
           <View style={styles.buttonRow}>
             <Pressable style={styles.playBtn} onPress={handlePlayMain}>
-              <Ionicons name="play" size={20} color="#000" />
+              <Ionicons name="play" size={18} color="#000" />
               <Text style={styles.playBtnText} selectable={false}>{isPlaying ? 'Playing' : 'Play'}</Text>
             </Pressable>
 
             {hasNextEpisode && isPlaying && (
                <Pressable style={styles.nextBtn} onPress={handleNextEpisode}>
-                 <Ionicons name="play-skip-forward" size={20} color="#fff" />
-                 <Text style={styles.nextBtnText} selectable={false}>Next Ep</Text>
+                 <Ionicons name="play-skip-forward" size={18} color="#fff" />
+                 <Text style={styles.nextBtnText} selectable={false}>Next</Text>
                </Pressable>
             )}
 
             <Pressable style={styles.actionBtn} onPress={toggleWatchlist}>
-              <Ionicons name={isInMyList ? "checkmark" : "add"} size={24} color="#fff" />
+              <Ionicons name={isInMyList ? "checkmark" : "add"} size={22} color="#fff" />
               <Text style={styles.actionBtnText} selectable={false}>My List</Text>
             </Pressable>
 
+            {/* Top Download Button (Only shows if NOT downloaded, NOT offline, and NOT web) */}
             {!isDownloaded && !isOfflineMode && Platform.OS !== 'web' && (
-              <Pressable style={styles.actionBtn} onPress={handleDownload} disabled={isDownloading}>
-                <Ionicons name="download-outline" size={22} color={isDownloading ? "#555" : "#fff"} />
-                <Text style={styles.actionBtnText} selectable={false}>{isDownloading ? `${downloadProgress}%` : 'Download'}</Text>
+              <Pressable 
+                style={styles.actionBtn} 
+                onPress={() => handleDownloadItem(
+                  activeEpisode ? activeEpisode.video_url : movie.video_url, 
+                  activeEpisode ? activeEpisode.id : movie.id, 
+                  activeEpisode ? activeEpisode.title : movie.title, 
+                  movie.poster_url
+                )} 
+              >
+                <Ionicons 
+                  name={(downloadingId === movie.id || (activeEpisode && downloadingId === activeEpisode.id)) ? "stop-circle-outline" : "download-outline"} 
+                  size={22} 
+                  color={(downloadingId === movie.id || (activeEpisode && downloadingId === activeEpisode.id)) ? "#555" : "#fff"} 
+                />
+                <Text style={styles.actionBtnText} selectable={false}>
+                  {(downloadingId === movie.id || (activeEpisode && downloadingId === activeEpisode.id)) ? `${downloadProgress}%` : 'Download'}
+                </Text>
               </Pressable>
             )}
           </View>
@@ -347,23 +370,39 @@ export default function TheaterScreen() {
                       <View style={styles.seasonEpisodesList}>
                         {seasonEpisodes.map(ep => {
                           const isActive = activeEpisode?.id === ep.id;
+                          const isDownloadingThisEp = downloadingId === ep.id;
+
                           return (
-                            <Pressable 
-                              key={ep.id} 
-                              style={[styles.epRow, isActive && styles.activeEpRow]} 
-                              onPress={() => handlePlayEpisode(ep)}
-                            >
-                              <View style={styles.epInfo}>
-                                <Text style={[styles.epTitle, isActive && { color: '#e50914', fontWeight: 'bold' }]} selectable={false}>
-                                  {ep.episode_number}. {ep.title}
-                                </Text>
-                              </View>
-                              <Ionicons 
-                                name={isActive ? "play-circle" : "play-circle-outline"} 
-                                size={28} 
-                                color={isActive ? "#e50914" : "#fff"} 
-                              />
-                            </Pressable>
+                            <View key={ep.id} style={[styles.epRow, isActive && styles.activeEpRow]}>
+                              
+                              {/* Left Side: Click to Play */}
+                              <Pressable style={styles.epInfoContainer} onPress={() => handlePlayEpisode(ep)}>
+                                <View style={styles.epInfo}>
+                                  <Text style={[styles.epTitle, isActive && { color: '#e50914', fontWeight: 'bold' }]} selectable={false}>
+                                    {ep.episode_number}. {ep.title}
+                                  </Text>
+                                </View>
+                                <Ionicons name={isActive ? "play-circle" : "play-circle-outline"} size={28} color={isActive ? "#e50914" : "#fff"} />
+                              </Pressable>
+
+                              {/* Right Side: Click to Download (Only on Mobile) */}
+                              {!isOfflineMode && Platform.OS !== 'web' && (
+                                <Pressable 
+                                  style={styles.epDownloadBtn} 
+                                  onPress={() => handleDownloadItem(ep.video_url, ep.id, ep.title, movie.poster_url)}
+                                >
+                                  <Ionicons 
+                                    name={isDownloadingThisEp ? "stop-circle-outline" : "download-outline"} 
+                                    size={24} 
+                                    color={isDownloadingThisEp ? "#888" : "#fff"} 
+                                  />
+                                  {isDownloadingThisEp && (
+                                    <Text style={{color:'#fff', fontSize: 10, textAlign: 'center', marginTop: 2}}>{downloadProgress}%</Text>
+                                  )}
+                                </Pressable>
+                              )}
+
+                            </View>
                           );
                         })}
                       </View>
@@ -409,12 +448,16 @@ const styles = StyleSheet.create({
   title: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
   activeEpisodeTitle: { color: '#e50914', fontSize: 15, fontWeight: 'bold', marginTop: 6 },
   meta: { color: '#888', marginVertical: 8, fontWeight: '600' },
-  buttonRow: { flexDirection: 'row', gap: 20, marginVertical: 15, alignItems: 'center' },
-  playBtn: { backgroundColor: '#fff', paddingHorizontal: 30, height: 40, borderRadius: 4, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 },
+  
+  // ---> FIX: Allows buttons to wrap instead of pushing off-screen, reduced gap <---
+  buttonRow: { flexDirection: 'row', gap: 12, marginVertical: 15, alignItems: 'center', flexWrap: 'wrap' },
+  // ---> FIX: Shrunk paddings and height to save space <---
+  playBtn: { backgroundColor: '#fff', paddingHorizontal: 16, height: 36, borderRadius: 4, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6 },
   playBtnText: { color: '#000', fontWeight: 'bold', fontSize: 14 },
-  nextBtn: { backgroundColor: '#333', paddingHorizontal: 20, height: 40, borderRadius: 4, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 },
+  nextBtn: { backgroundColor: '#333', paddingHorizontal: 16, height: 36, borderRadius: 4, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6 },
   nextBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
-  actionBtn: { alignItems: 'center', minWidth: 60 },
+  
+  actionBtn: { alignItems: 'center', minWidth: 50 },
   actionBtnText: { color: '#888', fontSize: 11, marginTop: 4 },
   description: { color: '#ccc', fontSize: 14, lineHeight: 22, marginTop: 10 },
   section: { marginTop: 40 },
@@ -425,10 +468,12 @@ const styles = StyleSheet.create({
   seasonHeaderText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
   seasonEpisodesList: { padding: 10 },
 
-  epRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 8, marginBottom: 5, borderWidth: 1, borderColor: 'transparent' },
+  epRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 8, marginBottom: 5, borderWidth: 1, borderColor: 'transparent', backgroundColor: '#111' },
   activeEpRow: { backgroundColor: '#1a0a0b', borderColor: '#e50914' },
+  epInfoContainer: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10 },
   epInfo: { flex: 1 },
   epTitle: { color: '#fff', fontSize: 14 },
+  epDownloadBtn: { paddingVertical: 12, paddingHorizontal: 15, justifyContent: 'center', alignItems: 'center', borderLeftWidth: 1, borderLeftColor: '#333' },
   
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   gridItem: { aspectRatio: 2/3, marginBottom: 10 },
