@@ -2,8 +2,7 @@
 import { addDownloadedMovie, isMovieDownloaded } from '@/lib/downloads';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system';
-import { createDownloadResumable } from 'expo-file-system/legacy'; // ---> THE FIX: Imported from the legacy folder for Expo 54 <---
+import * as FileSystem from 'expo-file-system/legacy'; // ---> THE MAGIC FIX: Pulled the entire system from the legacy folder <---
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
@@ -188,8 +187,7 @@ export default function TheaterScreen() {
     
     setIsDownloading(true);
     try {
-      // ---> THE FIX: Using createDownloadResumable directly from the legacy import <---
-      const downloadResumable = createDownloadResumable(
+      const downloadResumable = FileSystem.createDownloadResumable(
         mp4Url, 
         `${FileSystem.documentDirectory}${movie.id}.mp4`, 
         {}, 
