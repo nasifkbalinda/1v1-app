@@ -12,7 +12,6 @@ const POSTER_HEIGHT = 180;
 const CW_WIDTH = 280;
 const CW_HEIGHT = 90;
 
-// ---> UPDATED: Added is_featured to the Movie type <---
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; backdrop_url?: string | null; video_url: string | null; category: string | null; type: string | null; views?: number; is_featured?: boolean; };
 
 const FILTERS = ['All', 'Movies', 'TV Shows', 'Action', 'Comedy', 'Adventure', 'Sci-Fi', 'Horror', 'Animation'] as const;
@@ -41,7 +40,6 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<Filter>('All');
 
-  // ---> NEW: State to track which hero slide is currently active <---
   const [heroIndex, setHeroIndex] = useState(0);
 
   useEffect(() => {
@@ -128,17 +126,14 @@ export default function HomeScreen() {
 
   const filteredMovies = useMemo(() => filterByQuery(movies, searchQuery), [movies, searchQuery]);
   
-  // ---> NEW: Hero Slideshow Logic <---
   const heroSlides = useMemo(() => {
     if (searchQuery.trim() || filteredMovies.length === 0) return [];
     const featured = filteredMovies.filter(m => m.is_featured);
-    // If you haven't explicitly featured anything yet, default to showing the top 3 newest uploads
     return featured.length > 0 ? featured : filteredMovies.slice(0, 3);
   }, [filteredMovies, searchQuery]);
 
   const heroMovie = heroSlides[heroIndex] || null;
 
-  // ---> NEW: Auto-rotate the slider every 7 seconds <---
   useEffect(() => {
     if (heroSlides.length <= 1) return;
     const timer = setInterval(() => {
@@ -271,8 +266,8 @@ export default function HomeScreen() {
               </View>
             </View>
 
-            {/* ---> NEW: Slide Indicators Overlay <--- */}
-            {heroSlides.length > 1 && (
+            {/* ---> UPDATED: Slide Indicators Overlay (Desktop Only) <--- */}
+            {isDesktop && heroSlides.length > 1 && (
               <View style={styles.heroDotsContainer}>
                 {heroSlides.map((_, idx) => (
                   <Pressable 
@@ -426,7 +421,6 @@ const styles = StyleSheet.create({
   heroWatchlistButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(51, 51, 51, 0.8)', paddingVertical: 8, paddingHorizontal: 20, borderRadius: 4, gap: 6 },
   heroWatchlistButtonText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
 
-  // ---> NEW: Hero Dots Styling <---
   heroDotsContainer: { position: 'absolute', bottom: 15, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 8, zIndex: 20 },
   heroDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.4)' },
   heroDotActive: { backgroundColor: '#e50914', width: 24 },
