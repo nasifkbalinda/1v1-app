@@ -13,7 +13,9 @@ const CW_WIDTH = 280;
 const CW_HEIGHT = 90;
 
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; backdrop_url?: string | null; video_url: string | null; category: string | null; type: string | null; views?: number; };
-const FILTERS = ['All', 'Movies', 'TV Shows', 'Action', 'Comedy', 'Adventure', 'Sci-Fi'] as const;
+
+// ---> UPDATED: Added Horror and Animation to the master filters list <---
+const FILTERS = ['All', 'Movies', 'TV Shows', 'Action', 'Comedy', 'Adventure', 'Sci-Fi', 'Horror', 'Animation'] as const;
 type Filter = (typeof FILTERS)[number];
 
 function filterByQuery(movies: Movie[], query: string): Movie[] {
@@ -30,7 +32,6 @@ export default function HomeScreen() {
   const { width, height } = useWindowDimensions();
   const isDesktop = width > 768;
 
-  // ---> UPDATED: State to track if user can see Admin button <---
   const [canAccessAdmin, setCanAccessAdmin] = useState(false);
   
   const [movies, setMovies] = useState<Movie[]>([]);
@@ -40,7 +41,6 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<Filter>('All');
 
-  // ---> UPDATED: Check database for role instead of hardcoded email <---
   useEffect(() => {
     const checkRole = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -136,7 +136,8 @@ export default function HomeScreen() {
       : filteredMovies.slice(0, 12);
   }, [filteredMovies, heroMovie]);
 
-  const categoryOrder = ['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi'];
+  // ---> UPDATED: Added Horror and Animation to the sort order <---
+  const categoryOrder = ['Action', 'Adventure', 'Animation', 'Comedy', 'Drama', 'Horror', 'Sci-Fi'];
   
   const moviesByCategory = useMemo(() => {
     const grouped: Record<string, Movie[]> = {};
@@ -187,7 +188,6 @@ export default function HomeScreen() {
               <NavLink title="My List" path="/mylist" />
               <NavLink title="Downloads" path="/downloads" />
               <NavLink title="Settings" path="/settings" />
-              {/* ---> UPDATED: Uses the new variable <--- */}
               {canAccessAdmin && <NavLink title="Admin" path="/admin" />}
             </View>
           )}
@@ -195,13 +195,20 @@ export default function HomeScreen() {
 
         {isDesktop && (
           <View style={styles.headerRight}>
-            <View style={styles.categoryNav}>
+            {/* ---> FIXED: Wrapped Desktop Nav in a ScrollView to prevent squishing on smaller monitors <--- */}
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false} 
+              style={styles.desktopCategoryScroll}
+              contentContainerStyle={styles.categoryNav}
+            >
               {FILTERS.map((filter) => (
                 <Pressable key={filter} onPress={() => setActiveFilter(filter)}>
                   <Text style={[styles.filterLink, filter === activeFilter && styles.filterLinkActive]}>{filter}</Text>
                 </Pressable>
               ))}
-            </View>
+            </ScrollView>
+            
             <View style={styles.searchBox}>
               <Ionicons name="search" size={16} color="#888" style={{ marginRight: 8 }} />
               <TextInput style={styles.searchInput} placeholder="Search movies..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} />
@@ -347,15 +354,17 @@ const styles = StyleSheet.create({
   gridContainer: { width: '100%', maxWidth: 1600, alignSelf: 'center', paddingHorizontal: 20, zIndex: 10 },
   
   unifiedHeader: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 40, width: '100%', maxWidth: 1600, alignSelf: 'center' },
-  headerLeft: { flexDirection: 'row', alignItems: 'center' },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 30 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
+  // ---> FIXED: Allowed headerRight to compress, pushing categoryNav into a scrollable box <---
+  headerRight: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 20 },
   logo: { fontSize: 32, fontWeight: 'bold', color: '#e50914', marginRight: 40 },
   primaryNav: { flexDirection: 'row', gap: 24 },
   navItem: { paddingVertical: 5 },
   navText: { color: '#e5e5e5', fontSize: 13, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   navTextActive: { color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,1)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   
-  categoryNav: { flexDirection: 'row', gap: 20 },
+  desktopCategoryScroll: { flexShrink: 1, maxWidth: 600 },
+  categoryNav: { flexDirection: 'row', gap: 20, alignItems: 'center', paddingHorizontal: 10 },
   filterLink: { color: '#e5e5e5', fontSize: 13, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   filterLinkActive: { color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,1)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   
