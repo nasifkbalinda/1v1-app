@@ -18,9 +18,6 @@ export async function onRequest(context) {
   const credentials = btoa(`${MUX_TOKEN_ID}:${MUX_TOKEN_SECRET}`);
 
   // ---> YOUR SUPABASE KEYS <---
-  // Paste exactly what is inside your .env file here.
-  // Make sure there are NO spaces inside the quotes and NO trailing slash!
-  // Example: 'https://abcdefghijklmnop.supabase.co'
   const SUPABASE_URL = 'https://acmslndavkvavlacdzst.supabase.co';
   const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjbXNsbmRhdmt2YXZsYWNkenN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzMTY0NDksImV4cCI6MjA4Nzg5MjQ0OX0.v4jIVZZZ4Ampufl75GeUVcfg-oxyoPvDE66u6RVy6VQ';
 
@@ -77,10 +74,28 @@ export async function onRequest(context) {
     // 5. Process Mux Upload
     const body = await request.json().catch(() => ({}));
     const payload = { 
-      new_asset_settings: { playback_policies: ['public'], video_quality: 'basic', passthrough: body.passthrough || 'unknown', static_renditions: [{ resolution: 'highest' }] }, 
+      new_asset_settings: { 
+        playback_policies: ['public'], 
+        video_quality: 'basic', 
+        passthrough: body.passthrough || 'unknown', 
+        static_renditions: [{ resolution: 'highest' }] 
+      }, 
       cors_origin: '*' 
     };
-    if (body.subtitleUrl) { payload.new_asset_settings.text_tracks = [{ url: body.subtitleUrl, type: 'subtitles', language_code: 'en', name: 'English', closed_captions: true }]; }
+
+    // ---> THE FIX: Using the official Mux input array for subtitles <---
+    if (body.subtitleUrl) { 
+      payload.new_asset_settings.input = [
+        { 
+          url: body.subtitleUrl, 
+          type: 'text', 
+          text_type: 'subtitles', 
+          language_code: 'en', 
+          name: 'English', 
+          closed_captions: false 
+        }
+      ]; 
+    }
 
     const response = await fetch('https://api.mux.com/video/v1/uploads', {
       method: 'POST',
