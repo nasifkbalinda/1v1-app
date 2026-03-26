@@ -31,7 +31,8 @@ export default function AdminScreen() {
   
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [category, setCategory] = useState<'Action' | 'Adventure' | 'Comedy' | 'Drama' | 'Sci-Fi' | null>(null);
+  // ---> UPDATED: Added Horror and Animation to the state type <---
+  const [category, setCategory] = useState<'Action' | 'Adventure' | 'Comedy' | 'Drama' | 'Sci-Fi' | 'Horror' | 'Animation' | null>(null);
   const [posterFile, setPosterFile] = useState<any | null>(null);
   const [backdropFile, setBackdropFile] = useState<any | null>(null);
   
@@ -230,7 +231,6 @@ export default function AdminScreen() {
     if (!result.canceled) setBackdropFile({ uri: result.assets[0].uri, name: result.assets[0].fileName ?? `backdrop.jpg`, mimeType: result.assets[0].mimeType ?? 'image/jpeg', file: (result.assets[0] as any).file });
   };
   
-  // ---> THE FIX: Bypass Expo DocumentPicker on Web completely using raw HTML5 input <---
   const pickVideo = async (isEpisode: boolean = false) => {
     if (Platform.OS === 'web') {
       const input = document.createElement('input');
@@ -271,7 +271,6 @@ export default function AdminScreen() {
     if (!result.canceled) setEditBackdropFile({ uri: result.assets[0].uri, name: result.assets[0].fileName ?? `edit_backdrop.jpg`, mimeType: result.assets[0].mimeType ?? 'image/jpeg', file: (result.assets[0] as any).file });
   };
   
-  // ---> THE FIX: Native HTML5 input for editing <---
   const pickEditVideo = async () => {
     const msg = "Upload New Video? This will replace the current video when saved.";
     if (Platform.OS === 'web') {
@@ -300,7 +299,6 @@ export default function AdminScreen() {
     }
   };
 
-  // ---> THE FIX: Native HTML5 input for episodes <---
   const pickEpisodeEditVideo = async (epId: string) => {
     const msg = "Upload New Video? This will replace the episode's current video.";
     if (Platform.OS === 'web') {
@@ -635,7 +633,8 @@ export default function AdminScreen() {
                 <Text style={styles.label}>Description</Text>
                 <TextInput style={[styles.input, styles.descriptionInput]} placeholderTextColor="#666" multiline value={description} onChangeText={setDescription} />
                 <Text style={styles.label}>Category *</Text>
-                <View style={styles.optionRow}>{['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi'].map(opt => (<Pressable key={opt} style={[styles.optionChip, category === opt && styles.optionChipSelected]} onPress={() => setCategory(opt as any)}><Text style={styles.optionChipText}>{opt}</Text></Pressable>))}</View>
+                {/* ---> UPDATED: Added new categories to the upload mapping <--- */}
+                <View style={styles.optionRow}>{['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi', 'Horror', 'Animation'].map(opt => (<Pressable key={opt} style={[styles.optionChip, category === opt && styles.optionChipSelected]} onPress={() => setCategory(opt as any)}><Text style={styles.optionChipText}>{opt}</Text></Pressable>))}</View>
                 
                 <View style={styles.fileRow}>
                   <Pressable style={styles.selectButtonSmall} onPress={pickPoster}><Ionicons name="image" size={20} color="#fff" /><Text style={styles.selectButtonText} numberOfLines={1}>{posterFile ? posterFile.name : 'Poster (Vertical) *'}</Text></Pressable>
@@ -655,7 +654,8 @@ export default function AdminScreen() {
                 <Text style={styles.label}>Description</Text>
                 <TextInput style={[styles.input, styles.descriptionInput]} placeholderTextColor="#666" multiline value={description} onChangeText={setDescription} />
                 <Text style={styles.label}>Category *</Text>
-                <View style={styles.optionRow}>{['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi'].map(opt => (<Pressable key={opt} style={[styles.optionChip, category === opt && styles.optionChipSelected]} onPress={() => setCategory(opt as any)}><Text style={styles.optionChipText}>{opt}</Text></Pressable>))}</View>
+                {/* ---> UPDATED: Added new categories to the upload mapping <--- */}
+                <View style={styles.optionRow}>{['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi', 'Horror', 'Animation'].map(opt => (<Pressable key={opt} style={[styles.optionChip, category === opt && styles.optionChipSelected]} onPress={() => setCategory(opt as any)}><Text style={styles.optionChipText}>{opt}</Text></Pressable>))}</View>
                 
                 <View style={styles.fileRow}>
                   <Pressable style={styles.selectButtonSmall} onPress={pickPoster}><Ionicons name="image" size={20} color="#fff" /><Text style={styles.selectButtonText} numberOfLines={1}>{posterFile ? posterFile.name : 'Poster (Vertical) *'}</Text></Pressable>
