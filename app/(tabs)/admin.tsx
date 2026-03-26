@@ -6,7 +6,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 type UploadTask = { 
   id: string; 
@@ -31,10 +31,12 @@ export default function AdminScreen() {
   
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  // ---> UPDATED: Added Horror and Animation to the state type <---
   const [category, setCategory] = useState<'Action' | 'Adventure' | 'Comedy' | 'Drama' | 'Sci-Fi' | 'Horror' | 'Animation' | null>(null);
   const [posterFile, setPosterFile] = useState<any | null>(null);
   const [backdropFile, setBackdropFile] = useState<any | null>(null);
+  
+  // Featured toggle state
+  const [isFeatured, setIsFeatured] = useState(false);
   
   const [videoFile, setVideoFile] = useState<any | null>(null);
   const [subtitleFile, setSubtitleFile] = useState<any | null>(null);
@@ -63,6 +65,7 @@ export default function AdminScreen() {
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editCategory, setEditCategory] = useState('');
+  const [editIsFeatured, setEditIsFeatured] = useState(false);
   
   const [editPosterUrl, setEditPosterUrl] = useState('');
   const [editPosterFile, setEditPosterFile] = useState<any | null>(null);
@@ -191,15 +194,11 @@ export default function AdminScreen() {
   const fetchAllMovies = useCallback(async () => { 
     setManageLoading(true); 
     const { data: mData, error: mError } = await supabase.from('movies').select('*, profiles(email)').order('title'); 
-    if (mError) {
-      console.error("Error fetching movies:", mError.message);
-    }
+    if (mError) console.error("Error fetching movies:", mError.message);
     setManageMovies(mData ?? []); 
     
     const { data: eData, error: eError } = await supabase.from('episodes').select('*, movies(title), profiles(email)').eq('status', 'trash').order('season_number'); 
-    if (eError) {
-      console.error("Error fetching episodes:", eError.message);
-    }
+    if (eError) console.error("Error fetching episodes:", eError.message);
     setTrashedEpisodes(eData ?? []); 
     
     setManageLoading(false); 
@@ -401,13 +400,13 @@ export default function AdminScreen() {
   const queueMovieUpload = () => {
     if (!title || !category || !posterFile || !videoFile) { Alert.alert('Error', 'Fill all required fields!'); return; }
     const taskId = Date.now().toString();
-    const p = { cT: title, cD: description, cC: category, cP: posterFile, cB: backdropFile, cV: videoFile, cS: subtitleFile };
+    const p = { cT: title, cD: description, cC: category, cP: posterFile, cB: backdropFile, cV: videoFile, cS: subtitleFile, cF: isFeatured };
     setUploadTasks(prev => [{ id: taskId, title: title, type: 'Movie', progress: 0, status: 'uploading', message: 'Starting...', retryPayload: p }, ...prev]);
-    setTitle(''); setDescription(''); setCategory(null); setPosterFile(null); setBackdropFile(null); setVideoFile(null); setSubtitleFile(null);
-    runMovieBackground(taskId, p.cT, p.cD, p.cC, p.cP, p.cB, p.cV, p.cS);
+    setTitle(''); setDescription(''); setCategory(null); setPosterFile(null); setBackdropFile(null); setIsFeatured(false); setVideoFile(null); setSubtitleFile(null);
+    runMovieBackground(taskId, p.cT, p.cD, p.cC, p.cP, p.cB, p.cV, p.cS, p.cF);
   };
 
-  const runMovieBackground = async (taskId: string, title: string, desc: string, cat: string, poster: any, backdrop: any, video: any, subtitle: any) => {
+  const runMovieBackground = async (taskId: string, title: string, desc: string, cat: string, poster: any, backdrop: any, video: any, subtitle: any, featured: boolean) => {
     try {
       const timestamp = Date.now(); const safeSlug = title.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
       updateTask(taskId, { message: 'Uploading Images...' });
@@ -417,7 +416,7 @@ export default function AdminScreen() {
 
       updateTask(taskId, { message: 'Creating Database Entry...' });
       const { data, error } = await supabase.from('movies').insert({ 
-            title, description: desc || null, poster_url: posterUrl, backdrop_url: backdropUrl, type: 'Movie', category: cat, status: 'processing', uploaded_by: userId 
+            title, description: desc || null, poster_url: posterUrl, backdrop_url: backdropUrl, type: 'Movie', category: cat, status: 'processing', uploaded_by: userId, is_featured: featured 
         }).select('id').single();
         
       if (error) throw new Error(`Database Error: ${error.message}`);
@@ -449,7 +448,7 @@ export default function AdminScreen() {
 
   const handleRetryTask = (task: UploadTask) => {
     updateTask(task.id, { status: 'uploading', progress: 0, message: 'Retrying...' });
-    if (task.type === 'Movie') runMovieBackground(task.id, task.retryPayload.cT, task.retryPayload.cD, task.retryPayload.cC, task.retryPayload.cP, task.retryPayload.cB, task.retryPayload.cV, task.retryPayload.cS);
+    if (task.type === 'Movie') runMovieBackground(task.id, task.retryPayload.cT, task.retryPayload.cD, task.retryPayload.cC, task.retryPayload.cP, task.retryPayload.cB, task.retryPayload.cV, task.retryPayload.cS, task.retryPayload.cF);
     else if (task.type === 'Episode') runEpisodeBackground(task.id, task.retryPayload.cSId, task.retryPayload.cS, task.retryPayload.cE, task.retryPayload.cT, task.retryPayload.cV, task.retryPayload.cSub);
   };
 
@@ -460,9 +459,9 @@ export default function AdminScreen() {
       const timestamp = Date.now(); const safeSlug = title.replace(/[^a-zA-Z0-9-_]/g, '-').slice(0, 40);
       const posterUrl = await uploadFile(posterFile, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
       let backdropUrl = backdropFile ? await uploadFile(backdropFile, `backdrops/${timestamp}-${safeSlug}.jpg`, 'image/jpeg') : null;
-      const { error } = await supabase.from('movies').insert({ title, description: description || null, poster_url: posterUrl, backdrop_url: backdropUrl, type: 'TV Series', category, status: 'active', uploaded_by: userId });
+      const { error } = await supabase.from('movies').insert({ title, description: description || null, poster_url: posterUrl, backdrop_url: backdropUrl, type: 'TV Series', category, status: 'active', uploaded_by: userId, is_featured: isFeatured });
       if (error) throw error;
-      setTitle(''); setDescription(''); setCategory(null); setPosterFile(null); setBackdropFile(null); fetchTvSeries();
+      setTitle(''); setDescription(''); setCategory(null); setPosterFile(null); setBackdropFile(null); setIsFeatured(false); fetchTvSeries();
       Alert.alert("Success", "Series created!");
     } catch(e: any) { Alert.alert("Error", e.message); } finally { setTvSeriesUploading(false); }
   };
@@ -471,7 +470,8 @@ export default function AdminScreen() {
   useEffect(() => { if (uploadMode === 'episode') fetchTvSeries(); }, [uploadMode, fetchTvSeries]);
 
   const startEditing = async (movie: any) => {
-    setEditingMovie(movie); setEditTitle(movie.title); setEditDescription(movie.description || ''); setEditCategory(movie.category || ''); setEditPosterUrl(movie.poster_url || ''); setEditBackdropUrl(movie.backdrop_url || ''); setEditVideoUrl(movie.video_url || '');
+    setEditingMovie(movie); setEditTitle(movie.title); setEditDescription(movie.description || ''); setEditCategory(movie.category || ''); setEditIsFeatured(movie.is_featured || false);
+    setEditPosterUrl(movie.poster_url || ''); setEditBackdropUrl(movie.backdrop_url || ''); setEditVideoUrl(movie.video_url || '');
     setEditPosterFile(null); setEditBackdropFile(null); setEditVideoFile(null); 
     setEditSubtitleFile(null); 
     if (movie.type === 'TV Series') { setLoadingEpisodes(true); const { data } = await supabase.from('episodes').select('*').eq('movie_id', movie.id).neq('status', 'trash').order('season_number').order('episode_number'); setEditEpisodes(data || []); setLoadingEpisodes(false); }
@@ -486,7 +486,7 @@ export default function AdminScreen() {
       if (editPosterFile) finalPosterUrl = await uploadFile(editPosterFile, `posters/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
       if (editBackdropFile) finalBackdropUrl = await uploadFile(editBackdropFile, `backdrops/${timestamp}-${safeSlug}.jpg`, 'image/jpeg');
 
-      const { error: movieError } = await supabase.from('movies').update({ title: editTitle, description: editDescription, category: editCategory, poster_url: finalPosterUrl, backdrop_url: finalBackdropUrl }).eq('id', editingMovie.id);
+      const { error: movieError } = await supabase.from('movies').update({ title: editTitle, description: editDescription, category: editCategory, poster_url: finalPosterUrl, backdrop_url: finalBackdropUrl, is_featured: editIsFeatured }).eq('id', editingMovie.id);
       if (movieError) throw movieError;
 
       if (editingMovie.type === 'Movie' && (editVideoFile || editSubtitleFile)) {
@@ -524,7 +524,7 @@ export default function AdminScreen() {
           }
         });
         
-        const results = await Promise.all(episodeUpdates);
+        await Promise.all(episodeUpdates);
       }
       
       Alert.alert("Success", "Content updated!"); setEditingMovie(null); fetchAllMovies();
@@ -626,6 +626,19 @@ export default function AdminScreen() {
               <Pressable style={[styles.subTabButton, uploadMode === 'episode' && styles.tabButtonActive]} onPress={() => setUploadMode('episode')}><Text style={[styles.subTabButtonLabel, uploadMode === 'episode' && styles.subTabButtonLabelActive]}>Episode</Text></Pressable>
             </View>
 
+            {/* ---> FEATURED TOGGLE UI (Works for Movie & TV Series) <--- */}
+            {(uploadMode === 'movie' || uploadMode === 'tvseries') && (
+              <View style={styles.featuredToggleContainer}>
+                <Text style={styles.label}>Feature on Home Screen Carousel?</Text>
+                <Switch 
+                  value={isFeatured} 
+                  onValueChange={setIsFeatured} 
+                  trackColor={{ false: "#333", true: "#e50914" }}
+                  thumbColor={isFeatured ? "#fff" : "#888"}
+                />
+              </View>
+            )}
+
             {uploadMode === 'movie' && (
               <>
                 <Text style={styles.label}>Title *</Text>
@@ -633,7 +646,6 @@ export default function AdminScreen() {
                 <Text style={styles.label}>Description</Text>
                 <TextInput style={[styles.input, styles.descriptionInput]} placeholderTextColor="#666" multiline value={description} onChangeText={setDescription} />
                 <Text style={styles.label}>Category *</Text>
-                {/* ---> UPDATED: Added new categories to the upload mapping <--- */}
                 <View style={styles.optionRow}>{['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi', 'Horror', 'Animation'].map(opt => (<Pressable key={opt} style={[styles.optionChip, category === opt && styles.optionChipSelected]} onPress={() => setCategory(opt as any)}><Text style={styles.optionChipText}>{opt}</Text></Pressable>))}</View>
                 
                 <View style={styles.fileRow}>
@@ -654,7 +666,6 @@ export default function AdminScreen() {
                 <Text style={styles.label}>Description</Text>
                 <TextInput style={[styles.input, styles.descriptionInput]} placeholderTextColor="#666" multiline value={description} onChangeText={setDescription} />
                 <Text style={styles.label}>Category *</Text>
-                {/* ---> UPDATED: Added new categories to the upload mapping <--- */}
                 <View style={styles.optionRow}>{['Action', 'Adventure', 'Comedy', 'Drama', 'Sci-Fi', 'Horror', 'Animation'].map(opt => (<Pressable key={opt} style={[styles.optionChip, category === opt && styles.optionChipSelected]} onPress={() => setCategory(opt as any)}><Text style={styles.optionChipText}>{opt}</Text></Pressable>))}</View>
                 
                 <View style={styles.fileRow}>
@@ -734,6 +745,13 @@ export default function AdminScreen() {
                 {editingMovie ? (
                   <View style={styles.editSection}>
                     <Text style={styles.label}>Edit {editingMovie.type}</Text>
+                    
+                    {/* ---> EDIT FEATURED TOGGLE UI <--- */}
+                    <View style={[styles.featuredToggleContainer, { marginBottom: 15 }]}>
+                        <Text style={styles.label}>Feature on Home Screen?</Text>
+                        <Switch value={editIsFeatured} onValueChange={setEditIsFeatured} trackColor={{ false: "#333", true: "#e50914" }} />
+                    </View>
+
                     <TextInput style={styles.input} value={editTitle} onChangeText={setEditTitle} placeholder="Title" />
                     <TextInput style={[styles.input, styles.descriptionInput]} multiline value={editDescription} onChangeText={setEditDescription} placeholder="Description" />
                     
@@ -831,7 +849,11 @@ export default function AdminScreen() {
                       
                       <View style={styles.manageInfo}>
                         <Text style={styles.manageTitle}>{m.title}</Text>
-                        <Text style={styles.manageMeta}>{m.type} • Uploaded by: {m.profiles?.email || 'Super Admin'}</Text>
+                        <View style={{flexDirection: 'row', alignItems: 'center', gap: 6}}>
+                          <Text style={styles.manageMeta}>{m.type} • Uploaded by: {m.profiles?.email || 'Super Admin'}</Text>
+                          {/* ---> NEW: FEATURED BADGE <--- */}
+                          {m.is_featured && <View style={styles.featuredBadge}><Text style={styles.featuredBadgeText}>FEATURED</Text></View>}
+                        </View>
                       </View>
                       
                       <View style={styles.manageActions}>
@@ -1005,7 +1027,7 @@ const styles = StyleSheet.create({
   taskErrorText: { color: '#ef4444' },
   manageItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#111', borderWidth: 1, borderColor: '#2a2a2a', marginBottom: 8 },
   checkboxZone: { padding: 5, marginRight: 8 },
-  manageInfo: { flex: 1, marginRight: 12 },
+  manageInfo: { flex: 1, marginRight: 12, alignItems: 'flex-start' }, // Changed to flex-start so badges sit nicely
   manageTitle: { fontSize: 15, fontWeight: '600', color: '#fff', marginBottom: 4 },
   manageMeta: { fontSize: 13, color: '#888' },
   manageActions: { flexDirection: 'row', gap: 6 },
@@ -1049,4 +1071,9 @@ const styles = StyleSheet.create({
   leaderboardViews: { fontSize: 16, fontWeight: 'bold', color: '#e50914' },
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: '#2a2a2a' },
   searchInput: { flex: 1, color: '#fff', fontSize: 14, outlineStyle: 'none' },
+
+  // ---> NEW STYLES: Featured Toggle & Badge <---
+  featuredToggleContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15, backgroundColor: '#111', borderRadius: 10, marginBottom: 20, borderWidth: 1, borderColor: '#222' },
+  featuredBadge: { backgroundColor: '#eab308', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginTop: 4, alignSelf: 'flex-start' },
+  featuredBadgeText: { color: '#000', fontSize: 10, fontWeight: 'bold' },
 });

@@ -12,9 +12,9 @@ const POSTER_HEIGHT = 180;
 const CW_WIDTH = 280;
 const CW_HEIGHT = 90;
 
-type Movie = { id: string; title: string; description: string | null; poster_url: string | null; backdrop_url?: string | null; video_url: string | null; category: string | null; type: string | null; views?: number; };
+// ---> UPDATED: Added is_featured to the Movie type <---
+type Movie = { id: string; title: string; description: string | null; poster_url: string | null; backdrop_url?: string | null; video_url: string | null; category: string | null; type: string | null; views?: number; is_featured?: boolean; };
 
-// ---> UPDATED: Added Horror and Animation to the master filters list <---
 const FILTERS = ['All', 'Movies', 'TV Shows', 'Action', 'Comedy', 'Adventure', 'Sci-Fi', 'Horror', 'Animation'] as const;
 type Filter = (typeof FILTERS)[number];
 
@@ -40,6 +40,9 @@ export default function HomeScreen() {
   const [moviesRefreshing, setMoviesRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<Filter>('All');
+
+  // ---> NEW: State to track which hero slide is currently active <---
+  const [heroIndex, setHeroIndex] = useState(0);
 
   useEffect(() => {
     const checkRole = async () => {
@@ -124,19 +127,35 @@ export default function HomeScreen() {
   };
 
   const filteredMovies = useMemo(() => filterByQuery(movies, searchQuery), [movies, searchQuery]);
-  const heroMovie = !searchQuery.trim() && filteredMovies.length > 0 ? filteredMovies[0] : null;
   
+  // ---> NEW: Hero Slideshow Logic <---
+  const heroSlides = useMemo(() => {
+    if (searchQuery.trim() || filteredMovies.length === 0) return [];
+    const featured = filteredMovies.filter(m => m.is_featured);
+    // If you haven't explicitly featured anything yet, default to showing the top 3 newest uploads
+    return featured.length > 0 ? featured : filteredMovies.slice(0, 3);
+  }, [filteredMovies, searchQuery]);
+
+  const heroMovie = heroSlides[heroIndex] || null;
+
+  // ---> NEW: Auto-rotate the slider every 7 seconds <---
+  useEffect(() => {
+    if (heroSlides.length <= 1) return;
+    const timer = setInterval(() => {
+      setHeroIndex((prevIndex) => (prevIndex + 1) % heroSlides.length);
+    }, 7000); 
+    return () => clearInterval(timer);
+  }, [heroSlides.length]);
+
   const trendingMovies = useMemo(() => {
     return [...filteredMovies].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 10);
   }, [filteredMovies]);
 
   const latestUploadsMovies = useMemo(() => {
-    return heroMovie 
-      ? filteredMovies.filter(m => m.id !== heroMovie.id).slice(0, 12)
-      : filteredMovies.slice(0, 12);
-  }, [filteredMovies, heroMovie]);
+    const slideIds = heroSlides.map(s => s.id);
+    return filteredMovies.filter(m => !slideIds.includes(m.id)).slice(0, 12);
+  }, [filteredMovies, heroSlides]);
 
-  // ---> UPDATED: Added Horror and Animation to the sort order <---
   const categoryOrder = ['Action', 'Adventure', 'Animation', 'Comedy', 'Drama', 'Horror', 'Sci-Fi'];
   
   const moviesByCategory = useMemo(() => {
@@ -195,7 +214,6 @@ export default function HomeScreen() {
 
         {isDesktop && (
           <View style={styles.headerRight}>
-            {/* ---> FIXED: Wrapped Desktop Nav in a ScrollView to prevent squishing on smaller monitors <--- */}
             <ScrollView 
               horizontal 
               showsHorizontalScrollIndicator={false} 
@@ -252,6 +270,19 @@ export default function HomeScreen() {
                 </Pressable>
               </View>
             </View>
+
+            {/* ---> NEW: Slide Indicators Overlay <--- */}
+            {heroSlides.length > 1 && (
+              <View style={styles.heroDotsContainer}>
+                {heroSlides.map((_, idx) => (
+                  <Pressable 
+                    key={idx} 
+                    style={[styles.heroDot, heroIndex === idx && styles.heroDotActive]} 
+                    onPress={() => setHeroIndex(idx)}
+                  />
+                ))}
+              </View>
+            )}
           </View>
         )}
 
@@ -355,7 +386,6 @@ const styles = StyleSheet.create({
   
   unifiedHeader: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 40, width: '100%', maxWidth: 1600, alignSelf: 'center' },
   headerLeft: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
-  // ---> FIXED: Allowed headerRight to compress, pushing categoryNav into a scrollable box <---
   headerRight: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 20 },
   logo: { fontSize: 32, fontWeight: 'bold', color: '#e50914', marginRight: 40 },
   primaryNav: { flexDirection: 'row', gap: 24 },
@@ -395,6 +425,11 @@ const styles = StyleSheet.create({
   heroPlayButtonText: { color: '#000', fontSize: 14, fontWeight: 'bold' },
   heroWatchlistButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(51, 51, 51, 0.8)', paddingVertical: 8, paddingHorizontal: 20, borderRadius: 4, gap: 6 },
   heroWatchlistButtonText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+
+  // ---> NEW: Hero Dots Styling <---
+  heroDotsContainer: { position: 'absolute', bottom: 15, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 8, zIndex: 20 },
+  heroDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.4)' },
+  heroDotActive: { backgroundColor: '#e50914', width: 24 },
 
   section: { marginBottom: 30 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#e5e5e5', marginBottom: 12 },
