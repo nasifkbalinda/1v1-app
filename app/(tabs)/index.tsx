@@ -265,19 +265,6 @@ export default function HomeScreen() {
                 </Pressable>
               </View>
             </View>
-
-            {/* ---> UPDATED: Slide Indicators Overlay (Desktop Only) <--- */}
-            {isDesktop && heroSlides.length > 1 && (
-              <View style={styles.heroDotsContainer}>
-                {heroSlides.map((_, idx) => (
-                  <Pressable 
-                    key={idx} 
-                    style={[styles.heroDot, heroIndex === idx && styles.heroDotActive]} 
-                    onPress={() => setHeroIndex(idx)}
-                  />
-                ))}
-              </View>
-            )}
           </View>
         )}
 
@@ -420,10 +407,6 @@ const styles = StyleSheet.create({
   heroPlayButtonText: { color: '#000', fontSize: 14, fontWeight: 'bold' },
   heroWatchlistButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(51, 51, 51, 0.8)', paddingVertical: 8, paddingHorizontal: 20, borderRadius: 4, gap: 6 },
   heroWatchlistButtonText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
-
-  heroDotsContainer: { position: 'absolute', bottom: 15, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 8, zIndex: 20 },
-  heroDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.4)' },
-  heroDotActive: { backgroundColor: '#e50914', width: 24 },
 
   section: { marginBottom: 30 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#e5e5e5', marginBottom: 12 },
