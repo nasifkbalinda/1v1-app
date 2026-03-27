@@ -2,14 +2,47 @@
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
+import { supabase } from '@/lib/supabase'; // ---> NEW: Imported Supabase to check roles <---
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { Image, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const { width } = useWindowDimensions();
   const isDesktop = width > 768;
+
+  // ---> NEW: State to track if user is an Admin <---
+  const [canAccessAdmin, setCanAccessAdmin] = useState(false);
+
+  // ---> NEW: Database check for user role on the layout level <---
+  useEffect(() => {
+    const checkRole = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+        if (data && (data.role === 'super_admin' || data.role === 'manager')) {
+          setCanAccessAdmin(true);
+        } else {
+          setCanAccessAdmin(false);
+        }
+      } else {
+        setCanAccessAdmin(false);
+      }
+    };
+
+    checkRole();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user) {
+        checkRole();
+      } else {
+        setCanAccessAdmin(false);
+      }
+    });
+    return () => { authListener.subscription.unsubscribe(); };
+  }, []);
 
   // We only show the bottom tab bar on mobile. Desktop has it in index.tsx
   const showTabBar = !isDesktop;
@@ -63,13 +96,15 @@ export default function TabLayout() {
         }}
       />
       
-      {/* 4. Admin tab */}
+      {/* ---> UPDATED: Admin tab is now dynamically hidden based on role <--- */}
       <Tabs.Screen
         name="admin"
         options={{
           title: 'Admin Panel',
           tabBarLabel: 'Admin',
           headerShown: false, 
+          // Setting href to null completely removes the icon from the bottom bar
+          href: canAccessAdmin ? '/admin' : null, 
           tabBarIcon: ({ color }) => <Ionicons name="lock-closed-outline" size={24} color={color} />,
         }}
       />
