@@ -169,7 +169,6 @@ export default function HomeScreen() {
           <Text style={styles.logo}>V</Text>
           {isDesktop && (
             <View style={styles.primaryNav}>
-              {/* EXACT ORDER: Home, Movies, Series, My List, Genre, Admin */}
               <Pressable onPress={() => { setActiveFilter('All'); setIsDropdownOpen(false); router.navigate('/'); }} style={styles.navItem}>
                 <Text style={[styles.navText, activeFilter === 'All' && styles.navTextActive]}>Home</Text>
               </Pressable>
@@ -190,7 +189,7 @@ export default function HomeScreen() {
               <View style={{ position: 'relative' }}>
                 <Pressable style={styles.genreDropdownTrigger} onPress={() => setIsDropdownOpen(!isDropdownOpen)}>
                   <Text style={[styles.navText, GENRES.includes(activeFilter as any) && styles.navTextActive]}>Genre</Text>
-                  <Ionicons name={isDropdownOpen ? "caret-up" : "caret-down"} size={12} color="#e5e5e5" style={{ marginLeft: 2 }} />
+                  <Ionicons name={isDropdownOpen ? "caret-up" : "caret-down"} size={14} color="#e5e5e5" style={{ marginLeft: 4 }} />
                 </Pressable>
 
                 {isDropdownOpen && (
@@ -240,10 +239,9 @@ export default function HomeScreen() {
                 </Pressable>
               )}
 
-              {/* Profile Avatar (Desktop Only in Top Header) */}
               <Pressable onPress={() => router.push('/settings')} style={styles.profileButton}>
                 <Image source={{ uri: 'https://api.dicebear.com/7.x/avataaars/png?seed=vstream&backgroundColor=e50914' }} style={styles.profileAvatar} />
-                <Ionicons name="caret-down" size={10} color="#fff" style={{ marginLeft: 4 }} />
+                <Ionicons name="caret-down" size={10} color="#fff" style={{ marginLeft: 6 }} />
               </Pressable>
             </View>
           </View>
@@ -300,7 +298,6 @@ export default function HomeScreen() {
                </View>
                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 20 }}>
                  {['Home', 'Movies', 'Series', ...GENRES].map((filter) => {
-                   // Map "Home" to "All" for active state logic
                    const isHome = filter === 'Home';
                    const displayActive = isHome ? activeFilter === 'All' : filter === activeFilter;
                    return (
@@ -400,17 +397,19 @@ const styles = StyleSheet.create({
   headerRight: { flexShrink: 0 },
   
   logo: { fontSize: 32, fontWeight: 'bold', color: '#e50914', marginRight: 40 },
-  primaryNav: { flexDirection: 'row', gap: 20, alignItems: 'center' },
+  primaryNav: { flexDirection: 'row', gap: 24, alignItems: 'center' },
   navItem: { paddingVertical: 5 },
   
-  // Restored original font size (13px)
-  navText: { color: '#e5e5e5', fontSize: 13, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  // ---> INCREASED FONT SIZE to 15px <---
+  navText: { color: '#e5e5e5', fontSize: 15, fontWeight: '500', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   navTextActive: { color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,1)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   
   genreDropdownTrigger: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
   genreDropdownMenu: { position: 'absolute', top: 30, left: -10, backgroundColor: 'rgba(20,20,20,0.95)', borderWidth: 1, borderColor: '#333', borderRadius: 4, paddingVertical: 10, minWidth: 140, zIndex: 150 },
   dropdownItem: { paddingVertical: 10, paddingHorizontal: 20 },
-  dropdownItemText: { color: '#e5e5e5', fontSize: 13, fontWeight: '500' },
+  
+  // ---> INCREASED DROPDOWN FONT SIZE to match <---
+  dropdownItemText: { color: '#e5e5e5', fontSize: 15, fontWeight: '500' },
 
   rightIcons: { flexDirection: 'row', alignItems: 'center', gap: 20 },
   iconButton: { padding: 5 },
@@ -418,7 +417,7 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, color: '#fff', fontSize: 14, outlineStyle: 'none' },
 
   profileButton: { flexDirection: 'row', alignItems: 'center' },
-  profileAvatar: { width: 32, height: 32, borderRadius: 4 },
+  profileAvatar: { width: 34, height: 34, borderRadius: 4 },
 
   mobileSearchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', borderRadius: 8, marginBottom: 16, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: '#2a2a2a' },
   mobileFilterPill: { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 999, backgroundColor: '#121212', borderWidth: 1, borderColor: '#2a2a2a' },
