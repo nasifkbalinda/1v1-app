@@ -1,64 +1,107 @@
-import { supabase } from '@/lib/supabase';
+// @ts-nocheck
+import { useClientOnlyValue } from '@/components/useClientOnlyValue';
+import { useColorScheme } from '@/components/useColorScheme';
+import Colors from '@/constants/Colors';
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { useWindowDimensions, View } from 'react-native';
+import { Image, StyleSheet, useWindowDimensions, View } from 'react-native';
 
-export default function TabsLayout() {
+export default function TabLayout() {
+  const colorScheme = useColorScheme();
   const { width } = useWindowDimensions();
-  const isDesktop = width > 768; 
+  const isDesktop = width > 768;
 
-  const [isAdmin, setIsAdmin] = useState(false);
-
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setIsAdmin(data?.user?.email?.toLowerCase() === 'saifnasif1@gmail.com');
-    });
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      setIsAdmin(session?.user?.email?.toLowerCase() === 'saifnasif1@gmail.com');
-    });
-
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
-  }, []);
+  // We only show the bottom tab bar on mobile. Desktop has it in index.tsx
+  const showTabBar = !isDesktop;
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#0a0a0a' }}>
-      <Tabs
-        screenOptions={{
-          headerShown: false, // Ensures NO default headers are shown anywhere
-          tabBarStyle: isDesktop ? { display: 'none' } : { backgroundColor: '#111', borderTopColor: '#222' },
-          tabBarActiveTintColor: '#e50914',
-          tabBarInactiveTintColor: '#888',
+    <Tabs
+      screenOptions={{
+        tabBarActiveTintColor: Colors[colorScheme ?? 'dark'].tint,
+        headerShown: useClientOnlyValue(false, true),
+        tabBarStyle: { 
+          backgroundColor: '#121212', 
+          borderTopColor: '#2a2a2a', 
+          height: 60,
+          paddingBottom: 8,
+          position: 'absolute', // Ensures content scrolls under on mobile too
+          display: showTabBar ? 'flex' : 'none',
+        },
+        tabBarLabelStyle: { fontSize: 10, fontWeight: '600', color: '#bdbdbd' },
+      }}>
+      
+      {/* 1. Home tab */}
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'V-Stream', 
+          tabBarLabel: 'Home',
+          headerShown: false, 
+          tabBarIcon: ({ color }) => <Ionicons name="home-outline" size={24} color={color} />,
         }}
-      >
-        <Tabs.Screen 
-          name="index" 
-          options={{ title: 'Home', tabBarIcon: ({ color }) => <Ionicons name="home" size={24} color={color} /> }} 
-        />
-        <Tabs.Screen 
-          name="mylist" 
-          options={{ title: 'My List', tabBarIcon: ({ color }) => <Ionicons name="list" size={24} color={color} /> }} 
-        />
-        <Tabs.Screen 
-          name="downloads" 
-          options={{ title: 'Downloads', tabBarIcon: ({ color }) => <Ionicons name="download" size={24} color={color} /> }} 
-        />
-        <Tabs.Screen 
-          name="settings" 
-          options={{ title: 'Settings', tabBarIcon: ({ color }) => <Ionicons name="settings" size={24} color={color} /> }} 
-        />
-        <Tabs.Screen 
-          name="admin" 
-          options={{ 
-            title: 'Admin',
-            href: isAdmin ? '/admin' : null,
-            tabBarIcon: ({ color }) => <Ionicons name="construct" size={24} color={color} /> 
-          }} 
-        />
-      </Tabs>
-    </View>
+      />
+      
+      {/* 2. My List tab */}
+      <Tabs.Screen
+        name="mylist"
+        options={{
+          title: 'My List',
+          tabBarLabel: 'My List',
+          headerShown: false,
+          tabBarIcon: ({ color }) => <Ionicons name="list-outline" size={24} color={color} />,
+        }}
+      />
+      
+      {/* 3. Downloads tab */}
+      <Tabs.Screen
+        name="downloads"
+        options={{
+          title: 'Downloads',
+          tabBarLabel: 'Downloads',
+          headerShown: false,
+          tabBarIcon: ({ color }) => <Ionicons name="download-outline" size={24} color={color} />,
+        }}
+      />
+      
+      {/* 4. Admin tab */}
+      <Tabs.Screen
+        name="admin"
+        options={{
+          title: 'Admin Panel',
+          tabBarLabel: 'Admin',
+          headerShown: false, 
+          tabBarIcon: ({ color }) => <Ionicons name="lock-closed-outline" size={24} color={color} />,
+        }}
+      />
+      
+      {/* 5. Settings -> Profile Tab */}
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Account Settings',
+          tabBarLabel: 'Profile', 
+          headerShown: false,
+          tabBarIcon: ({ color, focused }) => (
+            <View style={[styles.profileIconWrapper, focused && styles.profileIconWrapperFocused]}>
+              <Image source={{ uri: 'https://api.dicebear.com/7.x/avataaars/png?seed=vstream&backgroundColor=e50914' }} style={styles.mobileProfileAvatar} />
+            </View>
+          ),
+        }}
+      />
+
+    </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  profileIconWrapper: {
+    padding: 2,
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+  profileIconWrapperFocused: {
+    borderColor: '#e50914',
+    borderWidth: 1,
+  },
+  mobileProfileAvatar: { width: 24, height: 24, borderRadius: 4 },
+});

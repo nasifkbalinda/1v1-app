@@ -41,8 +41,6 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  
-  // ---> NEW: State to track scrolling for the solid header <---
   const [isScrolled, setIsScrolled] = useState(false);
   
   const [activeFilter, setActiveFilter] = useState<Filter>('All');
@@ -161,7 +159,6 @@ export default function HomeScreen() {
         <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setIsDropdownOpen(false)} zIndex={90} />
       )}
 
-      {/* ---> UPDATED: Sticky header with dynamic background color <--- */}
       <View style={[
         styles.unifiedHeader, 
         { paddingTop: isDesktop ? 20 : insets.top + 10 },
@@ -172,24 +169,28 @@ export default function HomeScreen() {
           <Text style={styles.logo}>V</Text>
           {isDesktop && (
             <View style={styles.primaryNav}>
-              {/* ---> UPDATED: Unified Navigation Bar <--- */}
+              {/* EXACT ORDER: Home, Movies, Series, My List, Genre, Admin */}
               <Pressable onPress={() => { setActiveFilter('All'); setIsDropdownOpen(false); router.navigate('/'); }} style={styles.navItem}>
                 <Text style={[styles.navText, activeFilter === 'All' && styles.navTextActive]}>Home</Text>
+              </Pressable>
+              
+              <Pressable onPress={() => { setActiveFilter('Movies'); setIsDropdownOpen(false); }} style={styles.navItem}>
+                <Text style={[styles.navText, activeFilter === 'Movies' && styles.navTextActive]}>Movies</Text>
               </Pressable>
               
               <Pressable onPress={() => { setActiveFilter('Series'); setIsDropdownOpen(false); }} style={styles.navItem}>
                 <Text style={[styles.navText, activeFilter === 'Series' && styles.navTextActive]}>Series</Text>
               </Pressable>
-              
-              <Pressable onPress={() => { setActiveFilter('Movies'); setIsDropdownOpen(false); }} style={styles.navItem}>
-                <Text style={[styles.navText, activeFilter === 'Movies' && styles.navTextActive]}>Films</Text>
+
+              <Pressable onPress={() => { setIsDropdownOpen(false); router.navigate('/mylist'); }} style={styles.navItem}>
+                <Text style={[styles.navText, pathname === '/mylist' && styles.navTextActive]}>My List</Text>
               </Pressable>
               
-              {/* Genres Dropdown Trigger */}
+              {/* Genre Dropdown */}
               <View style={{ position: 'relative' }}>
                 <Pressable style={styles.genreDropdownTrigger} onPress={() => setIsDropdownOpen(!isDropdownOpen)}>
-                  <Text style={[styles.navText, GENRES.includes(activeFilter as any) && styles.navTextActive]}>Genres</Text>
-                  <Ionicons name={isDropdownOpen ? "caret-up" : "caret-down"} size={14} color="#e5e5e5" />
+                  <Text style={[styles.navText, GENRES.includes(activeFilter as any) && styles.navTextActive]}>Genre</Text>
+                  <Ionicons name={isDropdownOpen ? "caret-up" : "caret-down"} size={12} color="#e5e5e5" style={{ marginLeft: 2 }} />
                 </Pressable>
 
                 {isDropdownOpen && (
@@ -202,10 +203,6 @@ export default function HomeScreen() {
                   </View>
                 )}
               </View>
-
-              <Pressable onPress={() => { setIsDropdownOpen(false); router.navigate('/mylist'); }} style={styles.navItem}>
-                <Text style={[styles.navText, pathname === '/mylist' && styles.navTextActive]}>My List</Text>
-              </Pressable>
               
               {canAccessAdmin && (
                 <Pressable onPress={() => { setIsDropdownOpen(false); router.navigate('/admin'); }} style={styles.navItem}>
@@ -216,14 +213,12 @@ export default function HomeScreen() {
           )}
         </View>
 
-        <View style={styles.headerRight}>
-          <View style={styles.rightIcons}>
-            
-            {/* ---> UPDATED: Collapsible Search Bar <--- */}
-            {isDesktop && (
-              isSearchExpanded ? (
+        {isDesktop && (
+          <View style={styles.headerRight}>
+            <View style={styles.rightIcons}>
+              {isSearchExpanded ? (
                 <View style={styles.searchBoxActive}>
-                  <Ionicons name="search" size={20} color="#fff" style={{ marginRight: 8 }} />
+                  <Ionicons name="search" size={18} color="#fff" style={{ marginRight: 8 }} />
                   <TextInput 
                     style={styles.searchInput} 
                     placeholder="Titles, people, genres" 
@@ -235,28 +230,26 @@ export default function HomeScreen() {
                   />
                   {searchQuery.trim().length > 0 && (
                     <Pressable onPress={() => setSearchQuery('')}>
-                      <Ionicons name="close" size={20} color="#fff" />
+                      <Ionicons name="close" size={18} color="#fff" />
                     </Pressable>
                   )}
                 </View>
               ) : (
                 <Pressable onPress={() => setIsSearchExpanded(true)} style={styles.iconButton}>
-                  <Ionicons name="search" size={24} color="#fff" />
+                  <Ionicons name="search" size={22} color="#fff" />
                 </Pressable>
-              )
-            )}
+              )}
 
-            {/* ---> UPDATED: Profile Avatar is now visible on both Mobile and Desktop <--- */}
-            <Pressable onPress={() => router.push('/settings')} style={styles.profileButton}>
-              <Image source={{ uri: 'https://api.dicebear.com/7.x/avataaars/png?seed=vstream&backgroundColor=e50914' }} style={styles.profileAvatar} />
-              <Ionicons name="caret-down" size={12} color="#fff" style={{ marginLeft: 4 }} />
-            </Pressable>
-
+              {/* Profile Avatar (Desktop Only in Top Header) */}
+              <Pressable onPress={() => router.push('/settings')} style={styles.profileButton}>
+                <Image source={{ uri: 'https://api.dicebear.com/7.x/avataaars/png?seed=vstream&backgroundColor=e50914' }} style={styles.profileAvatar} />
+                <Ionicons name="caret-down" size={10} color="#fff" style={{ marginLeft: 4 }} />
+              </Pressable>
+            </View>
           </View>
-        </View>
+        )}
       </View>
 
-      {/* ---> UPDATED: ScrollView tracks Y offset to trigger solid navbar background <--- */}
       <ScrollView 
         style={styles.scroll} 
         contentContainerStyle={styles.scrollContent} 
@@ -299,19 +292,23 @@ export default function HomeScreen() {
 
         <View style={[styles.gridContainer, { marginTop: heroMovie ? (isDesktop ? -30 : -20) : 80 }]}>
 
-          {/* Mobile Filters (Maintained for mobile users) */}
           {!isDesktop && (
             <View style={{ marginBottom: 20 }}>
                <View style={styles.mobileSearchContainer}>
                  <Ionicons name="search" size={20} color="#888" style={{ marginRight: 10 }} />
-                 <TextInput style={styles.searchInput} placeholder="Search..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} />
+                 <TextInput style={styles.searchInput} placeholder="Search movies, series..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} />
                </View>
                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 20 }}>
-                 {['All', 'Movies', 'Series', ...GENRES].map((filter) => (
-                   <Pressable key={filter} onPress={() => setActiveFilter(filter as any)} style={[styles.mobileFilterPill, filter === activeFilter && styles.mobileFilterPillActive]}>
-                     <Text style={[styles.mobileFilterPillText, filter === activeFilter && styles.mobileFilterPillTextActive]}>{filter}</Text>
-                   </Pressable>
-                 ))}
+                 {['Home', 'Movies', 'Series', ...GENRES].map((filter) => {
+                   // Map "Home" to "All" for active state logic
+                   const isHome = filter === 'Home';
+                   const displayActive = isHome ? activeFilter === 'All' : filter === activeFilter;
+                   return (
+                     <Pressable key={filter} onPress={() => setActiveFilter(isHome ? 'All' : filter as any)} style={[styles.mobileFilterPill, displayActive && styles.mobileFilterPillActive]}>
+                       <Text style={[styles.mobileFilterPillText, displayActive && styles.mobileFilterPillTextActive]}>{filter}</Text>
+                     </Pressable>
+                   )
+                 })}
                </ScrollView>
             </View>
           )}
@@ -396,25 +393,24 @@ const styles = StyleSheet.create({
   scrollContent: { paddingBottom: 60 },
   gridContainer: { width: '100%', maxWidth: 1600, alignSelf: 'center', paddingHorizontal: 20, zIndex: 10 },
   
-  // ---> UPDATED: Added transition for smooth background color shift <---
   unifiedHeader: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 40, paddingBottom: 15, width: '100%', maxWidth: 1600, alignSelf: 'center', backgroundColor: 'transparent', transition: 'background-color 0.3s ease' },
-  unifiedHeaderScrolled: { backgroundColor: 'rgba(14,14,14,0.95)' }, // Netflix-style dark glassy bar
+  unifiedHeaderScrolled: { backgroundColor: 'rgba(14,14,14,0.95)' },
   
   headerLeft: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
-  headerRight: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 20 },
+  headerRight: { flexShrink: 0 },
   
   logo: { fontSize: 32, fontWeight: 'bold', color: '#e50914', marginRight: 40 },
   primaryNav: { flexDirection: 'row', gap: 20, alignItems: 'center' },
   navItem: { paddingVertical: 5 },
   
-  // ---> UPDATED: Font size increased from 13 to 15 <---
-  navText: { color: '#e5e5e5', fontSize: 15, fontWeight: '500', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  // Restored original font size (13px)
+  navText: { color: '#e5e5e5', fontSize: 13, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   navTextActive: { color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,1)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   
-  genreDropdownTrigger: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 5 },
-  genreDropdownMenu: { position: 'absolute', top: 35, left: -20, backgroundColor: 'rgba(20,20,20,0.95)', borderWidth: 1, borderColor: '#333', borderRadius: 4, paddingVertical: 10, minWidth: 160, zIndex: 150 },
+  genreDropdownTrigger: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
+  genreDropdownMenu: { position: 'absolute', top: 30, left: -10, backgroundColor: 'rgba(20,20,20,0.95)', borderWidth: 1, borderColor: '#333', borderRadius: 4, paddingVertical: 10, minWidth: 140, zIndex: 150 },
   dropdownItem: { paddingVertical: 10, paddingHorizontal: 20 },
-  dropdownItemText: { color: '#e5e5e5', fontSize: 14, fontWeight: '500' },
+  dropdownItemText: { color: '#e5e5e5', fontSize: 13, fontWeight: '500' },
 
   rightIcons: { flexDirection: 'row', alignItems: 'center', gap: 20 },
   iconButton: { padding: 5 },
