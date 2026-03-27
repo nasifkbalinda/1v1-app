@@ -14,9 +14,8 @@ const CW_HEIGHT = 90;
 
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; backdrop_url?: string | null; video_url: string | null; category: string | null; type: string | null; views?: number; is_featured?: boolean; };
 
-const MAIN_FILTERS = ['All', 'Movies', 'Series'] as const;
 const GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Drama', 'Horror', 'Sci-Fi'] as const;
-type Filter = (typeof MAIN_FILTERS)[number] | (typeof GENRES)[number];
+type Filter = 'All' | 'Movies' | 'Series' | (typeof GENRES)[number];
 
 function filterByQuery(movies: Movie[], query: string): Movie[] {
   if (!query.trim()) return movies;
@@ -40,8 +39,11 @@ export default function HomeScreen() {
   const [moviesRefreshing, setMoviesRefreshing] = useState(false);
   
   const [searchQuery, setSearchQuery] = useState('');
-  const [isSearchExpanded, setIsSearchExpanded] = useState(false); // ---> NEW: Search toggle state
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false); // ---> NEW: Dropdown toggle state
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  
+  // ---> NEW: State to track scrolling for the solid header <---
+  const [isScrolled, setIsScrolled] = useState(false);
   
   const [activeFilter, setActiveFilter] = useState<Filter>('All');
   const [heroIndex, setHeroIndex] = useState(0);
@@ -148,15 +150,6 @@ export default function HomeScreen() {
     });
   }, [moviesByCategory]);
 
-  const NavLink = ({ title, path }: { title: string, path: string }) => {
-    const isActive = pathname === path || (path === '/' && pathname === '/index');
-    return (
-      <Pressable onPress={() => router.navigate(path)} style={styles.navItem}>
-        <Text style={[styles.navText, isActive && styles.navTextActive]}>{title}</Text>
-      </Pressable>
-    );
-  };
-
   const heroHeight = isDesktop ? Math.min(width / (16 / 9), height * 0.85) : height * 0.5;
 
   if (loading) return (<View style={styles.loadingContainer}><ActivityIndicator size="large" color="#e50914" /></View>);
@@ -164,64 +157,71 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       
-      {/* ---> NEW: Invisible overlay to close dropdown when clicking outside <--- */}
       {isDropdownOpen && (
         <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setIsDropdownOpen(false)} zIndex={90} />
       )}
 
-      <View style={[styles.unifiedHeader, { paddingTop: isDesktop ? 10 : insets.top + 10 }]}>
+      {/* ---> UPDATED: Sticky header with dynamic background color <--- */}
+      <View style={[
+        styles.unifiedHeader, 
+        { paddingTop: isDesktop ? 20 : insets.top + 10 },
+        isScrolled && styles.unifiedHeaderScrolled
+      ]}>
+        
         <View style={styles.headerLeft}>
           <Text style={styles.logo}>V</Text>
           {isDesktop && (
             <View style={styles.primaryNav}>
-              <NavLink title="Home" path="/" />
-              <NavLink title="My List" path="/mylist" />
-              {canAccessAdmin && <NavLink title="Admin" path="/admin" />}
-            </View>
-          )}
-        </View>
-
-        {isDesktop && (
-          <View style={styles.headerRight}>
-            
-            {/* Main Filters: All, Movies, Series */}
-            <View style={styles.mainFiltersNav}>
-              {MAIN_FILTERS.map((filter) => (
-                <Pressable key={filter} onPress={() => { setActiveFilter(filter); setIsDropdownOpen(false); }}>
-                  <Text style={[styles.filterLink, filter === activeFilter && styles.filterLinkActive]}>{filter}</Text>
-                </Pressable>
-              ))}
+              {/* ---> UPDATED: Unified Navigation Bar <--- */}
+              <Pressable onPress={() => { setActiveFilter('All'); setIsDropdownOpen(false); router.navigate('/'); }} style={styles.navItem}>
+                <Text style={[styles.navText, activeFilter === 'All' && styles.navTextActive]}>Home</Text>
+              </Pressable>
+              
+              <Pressable onPress={() => { setActiveFilter('Series'); setIsDropdownOpen(false); }} style={styles.navItem}>
+                <Text style={[styles.navText, activeFilter === 'Series' && styles.navTextActive]}>Series</Text>
+              </Pressable>
+              
+              <Pressable onPress={() => { setActiveFilter('Movies'); setIsDropdownOpen(false); }} style={styles.navItem}>
+                <Text style={[styles.navText, activeFilter === 'Movies' && styles.navTextActive]}>Films</Text>
+              </Pressable>
               
               {/* Genres Dropdown Trigger */}
               <View style={{ position: 'relative' }}>
-                <Pressable 
-                  style={styles.genreDropdownTrigger} 
-                  onPress={() => setIsDropdownOpen(!isDropdownOpen)}
-                >
-                  <Text style={[styles.filterLink, GENRES.includes(activeFilter as any) && styles.filterLinkActive]}>Genres</Text>
+                <Pressable style={styles.genreDropdownTrigger} onPress={() => setIsDropdownOpen(!isDropdownOpen)}>
+                  <Text style={[styles.navText, GENRES.includes(activeFilter as any) && styles.navTextActive]}>Genres</Text>
                   <Ionicons name={isDropdownOpen ? "caret-up" : "caret-down"} size={14} color="#e5e5e5" />
                 </Pressable>
 
-                {/* The Dropdown Menu */}
                 {isDropdownOpen && (
                   <View style={styles.genreDropdownMenu}>
                     {GENRES.map(genre => (
-                      <Pressable 
-                        key={genre} 
-                        style={styles.dropdownItem} 
-                        onPress={() => { setActiveFilter(genre); setIsDropdownOpen(false); }}
-                      >
-                        <Text style={[styles.dropdownItemText, activeFilter === genre && styles.filterLinkActive]}>{genre}</Text>
+                      <Pressable key={genre} style={styles.dropdownItem} onPress={() => { setActiveFilter(genre); setIsDropdownOpen(false); }}>
+                        <Text style={[styles.dropdownItemText, activeFilter === genre && styles.navTextActive]}>{genre}</Text>
                       </Pressable>
                     ))}
                   </View>
                 )}
               </View>
-            </View>
 
-            {/* Collapsible Search Bar */}
-            <View style={styles.rightIcons}>
-              {isSearchExpanded ? (
+              <Pressable onPress={() => { setIsDropdownOpen(false); router.navigate('/mylist'); }} style={styles.navItem}>
+                <Text style={[styles.navText, pathname === '/mylist' && styles.navTextActive]}>My List</Text>
+              </Pressable>
+              
+              {canAccessAdmin && (
+                <Pressable onPress={() => { setIsDropdownOpen(false); router.navigate('/admin'); }} style={styles.navItem}>
+                  <Text style={[styles.navText, pathname === '/admin' && styles.navTextActive]}>Admin</Text>
+                </Pressable>
+              )}
+            </View>
+          )}
+        </View>
+
+        <View style={styles.headerRight}>
+          <View style={styles.rightIcons}>
+            
+            {/* ---> UPDATED: Collapsible Search Bar <--- */}
+            {isDesktop && (
+              isSearchExpanded ? (
                 <View style={styles.searchBoxActive}>
                   <Ionicons name="search" size={20} color="#fff" style={{ marginRight: 8 }} />
                   <TextInput 
@@ -243,20 +243,28 @@ export default function HomeScreen() {
                 <Pressable onPress={() => setIsSearchExpanded(true)} style={styles.iconButton}>
                   <Ionicons name="search" size={24} color="#fff" />
                 </Pressable>
-              )}
+              )
+            )}
 
-              {/* Profile Avatar (Settings) */}
-              <Pressable onPress={() => router.push('/settings')} style={styles.profileButton}>
-                <Image source={{ uri: 'https://api.dicebear.com/7.x/avataaars/png?seed=vstream&backgroundColor=e50914' }} style={styles.profileAvatar} />
-                <Ionicons name="caret-down" size={12} color="#fff" style={{ marginLeft: 4 }} />
-              </Pressable>
-            </View>
+            {/* ---> UPDATED: Profile Avatar is now visible on both Mobile and Desktop <--- */}
+            <Pressable onPress={() => router.push('/settings')} style={styles.profileButton}>
+              <Image source={{ uri: 'https://api.dicebear.com/7.x/avataaars/png?seed=vstream&backgroundColor=e50914' }} style={styles.profileAvatar} />
+              <Ionicons name="caret-down" size={12} color="#fff" style={{ marginLeft: 4 }} />
+            </Pressable>
 
           </View>
-        )}
+        </View>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={moviesRefreshing} onRefresh={handleManualRefresh} tintColor="#e50914" />}>
+      {/* ---> UPDATED: ScrollView tracks Y offset to trigger solid navbar background <--- */}
+      <ScrollView 
+        style={styles.scroll} 
+        contentContainerStyle={styles.scrollContent} 
+        showsVerticalScrollIndicator={false} 
+        onScroll={(e) => setIsScrolled(e.nativeEvent.contentOffset.y > 20)}
+        scrollEventThrottle={16}
+        refreshControl={<RefreshControl refreshing={moviesRefreshing} onRefresh={handleManualRefresh} tintColor="#e50914" />}
+      >
         
         {heroMovie && (
           <View style={[styles.heroContainer, { height: heroHeight }]}>
@@ -291,14 +299,15 @@ export default function HomeScreen() {
 
         <View style={[styles.gridContainer, { marginTop: heroMovie ? (isDesktop ? -30 : -20) : 80 }]}>
 
+          {/* Mobile Filters (Maintained for mobile users) */}
           {!isDesktop && (
             <View style={{ marginBottom: 20 }}>
                <View style={styles.mobileSearchContainer}>
                  <Ionicons name="search" size={20} color="#888" style={{ marginRight: 10 }} />
-                 <TextInput style={styles.searchInput} placeholder="Search movies..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} />
+                 <TextInput style={styles.searchInput} placeholder="Search..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} />
                </View>
                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 20 }}>
-                 {[...MAIN_FILTERS, ...GENRES].map((filter) => (
+                 {['All', 'Movies', 'Series', ...GENRES].map((filter) => (
                    <Pressable key={filter} onPress={() => setActiveFilter(filter as any)} style={[styles.mobileFilterPill, filter === activeFilter && styles.mobileFilterPillActive]}>
                      <Text style={[styles.mobileFilterPillText, filter === activeFilter && styles.mobileFilterPillTextActive]}>{filter}</Text>
                    </Pressable>
@@ -387,24 +396,25 @@ const styles = StyleSheet.create({
   scrollContent: { paddingBottom: 60 },
   gridContainer: { width: '100%', maxWidth: 1600, alignSelf: 'center', paddingHorizontal: 20, zIndex: 10 },
   
-  unifiedHeader: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 40, width: '100%', maxWidth: 1600, alignSelf: 'center' },
+  // ---> UPDATED: Added transition for smooth background color shift <---
+  unifiedHeader: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 40, paddingBottom: 15, width: '100%', maxWidth: 1600, alignSelf: 'center', backgroundColor: 'transparent', transition: 'background-color 0.3s ease' },
+  unifiedHeaderScrolled: { backgroundColor: 'rgba(14,14,14,0.95)' }, // Netflix-style dark glassy bar
+  
   headerLeft: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
-  headerRight: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 40 },
+  headerRight: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 20 },
   
   logo: { fontSize: 32, fontWeight: 'bold', color: '#e50914', marginRight: 40 },
-  primaryNav: { flexDirection: 'row', gap: 24 },
+  primaryNav: { flexDirection: 'row', gap: 20, alignItems: 'center' },
   navItem: { paddingVertical: 5 },
-  navText: { color: '#e5e5e5', fontSize: 13, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  
+  // ---> UPDATED: Font size increased from 13 to 15 <---
+  navText: { color: '#e5e5e5', fontSize: 15, fontWeight: '500', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   navTextActive: { color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,1)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   
-  mainFiltersNav: { flexDirection: 'row', gap: 20, alignItems: 'center' },
-  filterLink: { color: '#e5e5e5', fontSize: 13, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
-  filterLinkActive: { color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,1)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
-  
-  genreDropdownTrigger: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  genreDropdownMenu: { position: 'absolute', top: 30, left: -20, backgroundColor: 'rgba(20,20,20,0.95)', borderWidth: 1, borderColor: '#333', borderRadius: 4, paddingVertical: 10, minWidth: 160, zIndex: 150 },
+  genreDropdownTrigger: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 5 },
+  genreDropdownMenu: { position: 'absolute', top: 35, left: -20, backgroundColor: 'rgba(20,20,20,0.95)', borderWidth: 1, borderColor: '#333', borderRadius: 4, paddingVertical: 10, minWidth: 160, zIndex: 150 },
   dropdownItem: { paddingVertical: 10, paddingHorizontal: 20 },
-  dropdownItemText: { color: '#e5e5e5', fontSize: 13, fontWeight: '500' },
+  dropdownItemText: { color: '#e5e5e5', fontSize: 14, fontWeight: '500' },
 
   rightIcons: { flexDirection: 'row', alignItems: 'center', gap: 20 },
   iconButton: { padding: 5 },
