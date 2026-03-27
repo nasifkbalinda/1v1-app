@@ -14,8 +14,9 @@ const CW_HEIGHT = 90;
 
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; backdrop_url?: string | null; video_url: string | null; category: string | null; type: string | null; views?: number; is_featured?: boolean; };
 
-const FILTERS = ['All', 'Movies', 'TV Shows', 'Action', 'Comedy', 'Adventure', 'Sci-Fi', 'Horror', 'Animation'] as const;
-type Filter = (typeof FILTERS)[number];
+const MAIN_FILTERS = ['All', 'Movies', 'Series'] as const;
+const GENRES = ['Action', 'Adventure', 'Animation', 'Comedy', 'Drama', 'Horror', 'Sci-Fi'] as const;
+type Filter = (typeof MAIN_FILTERS)[number] | (typeof GENRES)[number];
 
 function filterByQuery(movies: Movie[], query: string): Movie[] {
   if (!query.trim()) return movies;
@@ -37,9 +38,12 @@ export default function HomeScreen() {
   const [continueWatching, setContinueWatching] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [moviesRefreshing, setMoviesRefreshing] = useState(false);
+  
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false); // ---> NEW: Search toggle state
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false); // ---> NEW: Dropdown toggle state
+  
   const [activeFilter, setActiveFilter] = useState<Filter>('All');
-
   const [heroIndex, setHeroIndex] = useState(0);
 
   useEffect(() => {
@@ -54,15 +58,9 @@ export default function HomeScreen() {
         }
       }
     };
-
     checkRole();
-
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session?.user) {
-        checkRole();
-      } else {
-        setCanAccessAdmin(false);
-      }
+      if (session?.user) checkRole(); else setCanAccessAdmin(false);
     });
     return () => { authListener.subscription.unsubscribe(); };
   }, []);
@@ -70,26 +68,22 @@ export default function HomeScreen() {
   const applyActiveFilterToMoviesQuery = (query: any, filter: Filter) => {
     if (filter === 'All') return query;
     if (filter === 'Movies') return query.ilike('type', '%movie%');
-    if (filter === 'TV Shows') return query.ilike('type', '%tv%');
+    if (filter === 'Series') return query.ilike('type', '%tv%');
     return query.ilike('category', `%${filter}%`);
   };
 
   const fetchMovies = async (isInitial = false) => {
     try {
-      if (isInitial) setLoading(true);
-      else setMoviesRefreshing(true);
-      
+      if (isInitial) setLoading(true); else setMoviesRefreshing(true);
       const baseQuery = supabase.from('movies').select('*').eq('status', 'active');
       const filteredQuery = applyActiveFilterToMoviesQuery(baseQuery, activeFilter).order('id', { ascending: false }); 
-      
       const { data, error } = await filteredQuery;
       if (error) throw error;
       setMovies(data ?? []);
     } catch (err) {
       console.error('Error fetching movies:', err);
     } finally {
-      setLoading(false);
-      setMoviesRefreshing(false);
+      setLoading(false); setMoviesRefreshing(false);
     }
   };
 
@@ -97,32 +91,17 @@ export default function HomeScreen() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return; 
-
-      const { data, error } = await supabase
-        .from('playback_progress')
-        .select('timestamp_seconds, updated_at, movie_id, movies (*)')
-        .eq('user_id', user.id)
-        .order('updated_at', { ascending: false })
-        .limit(10);
-
+      const { data, error } = await supabase.from('playback_progress').select('timestamp_seconds, updated_at, movie_id, movies (*)').eq('user_id', user.id).order('updated_at', { ascending: false }).limit(10);
       if (data && !error) {
         const validProgress = data.filter(item => item.movies !== null);
         setContinueWatching(validProgress);
       }
-    } catch (err) {
-      console.error('Error fetching continue watching:', err);
-    }
+    } catch (err) { console.error('Error fetching continue watching:', err); }
   };
 
-  useEffect(() => { 
-    fetchMovies(true); 
-    fetchContinueWatching(); 
-  }, [activeFilter]);
+  useEffect(() => { fetchMovies(true); fetchContinueWatching(); }, [activeFilter]);
 
-  const handleManualRefresh = () => { 
-    fetchMovies(false); 
-    fetchContinueWatching(); 
-  };
+  const handleManualRefresh = () => { fetchMovies(false); fetchContinueWatching(); };
 
   const filteredMovies = useMemo(() => filterByQuery(movies, searchQuery), [movies, searchQuery]);
   
@@ -136,28 +115,21 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (heroSlides.length <= 1) return;
-    const timer = setInterval(() => {
-      setHeroIndex((prevIndex) => (prevIndex + 1) % heroSlides.length);
-    }, 7000); 
+    const timer = setInterval(() => { setHeroIndex((prevIndex) => (prevIndex + 1) % heroSlides.length); }, 7000); 
     return () => clearInterval(timer);
   }, [heroSlides.length]);
 
-  const trendingMovies = useMemo(() => {
-    return [...filteredMovies].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 10);
-  }, [filteredMovies]);
-
+  const trendingMovies = useMemo(() => [...filteredMovies].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 10), [filteredMovies]);
   const latestUploadsMovies = useMemo(() => {
     const slideIds = heroSlides.map(s => s.id);
     return filteredMovies.filter(m => !slideIds.includes(m.id)).slice(0, 12);
   }, [filteredMovies, heroSlides]);
 
-  const categoryOrder = ['Action', 'Adventure', 'Animation', 'Comedy', 'Drama', 'Horror', 'Sci-Fi'];
-  
   const moviesByCategory = useMemo(() => {
     const grouped: Record<string, Movie[]> = {};
     for (const movie of filteredMovies) {
       let cat = movie.category?.trim() || 'Other';
-      const knownCat = FILTERS.find(f => f.toLowerCase() === cat.toLowerCase());
+      const knownCat = GENRES.find(f => f.toLowerCase() === cat.toLowerCase());
       if (knownCat) cat = knownCat;
       if (!grouped[cat]) grouped[cat] = [];
       grouped[cat].push(movie);
@@ -167,14 +139,14 @@ export default function HomeScreen() {
 
   const sortedCategories = useMemo(() => {
     return Object.keys(moviesByCategory).sort((a, b) => {
-      const ia = categoryOrder.indexOf(a);
-      const ib = categoryOrder.indexOf(b);
+      const ia = GENRES.indexOf(a as any);
+      const ib = GENRES.indexOf(b as any);
       if (ia === -1 && ib === -1) return a.localeCompare(b);
       if (ia === -1) return 1;
       if (ib === -1) return -1;
       return ia - ib;
     });
-  }, [moviesByCategory, categoryOrder]);
+  }, [moviesByCategory]);
 
   const NavLink = ({ title, path }: { title: string, path: string }) => {
     const isActive = pathname === path || (path === '/' && pathname === '/index');
@@ -185,14 +157,18 @@ export default function HomeScreen() {
     );
   };
 
-  const heroHeight = isDesktop
-    ? Math.min(width / (16 / 9), height * 0.85)
-    : height * 0.5;
+  const heroHeight = isDesktop ? Math.min(width / (16 / 9), height * 0.85) : height * 0.5;
 
   if (loading) return (<View style={styles.loadingContainer}><ActivityIndicator size="large" color="#e50914" /></View>);
 
   return (
     <View style={styles.container}>
+      
+      {/* ---> NEW: Invisible overlay to close dropdown when clicking outside <--- */}
+      {isDropdownOpen && (
+        <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setIsDropdownOpen(false)} zIndex={90} />
+      )}
+
       <View style={[styles.unifiedHeader, { paddingTop: isDesktop ? 10 : insets.top + 10 }]}>
         <View style={styles.headerLeft}>
           <Text style={styles.logo}>V</Text>
@@ -200,8 +176,6 @@ export default function HomeScreen() {
             <View style={styles.primaryNav}>
               <NavLink title="Home" path="/" />
               <NavLink title="My List" path="/mylist" />
-              <NavLink title="Downloads" path="/downloads" />
-              <NavLink title="Settings" path="/settings" />
               {canAccessAdmin && <NavLink title="Admin" path="/admin" />}
             </View>
           )}
@@ -209,23 +183,75 @@ export default function HomeScreen() {
 
         {isDesktop && (
           <View style={styles.headerRight}>
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false} 
-              style={styles.desktopCategoryScroll}
-              contentContainerStyle={styles.categoryNav}
-            >
-              {FILTERS.map((filter) => (
-                <Pressable key={filter} onPress={() => setActiveFilter(filter)}>
+            
+            {/* Main Filters: All, Movies, Series */}
+            <View style={styles.mainFiltersNav}>
+              {MAIN_FILTERS.map((filter) => (
+                <Pressable key={filter} onPress={() => { setActiveFilter(filter); setIsDropdownOpen(false); }}>
                   <Text style={[styles.filterLink, filter === activeFilter && styles.filterLinkActive]}>{filter}</Text>
                 </Pressable>
               ))}
-            </ScrollView>
-            
-            <View style={styles.searchBox}>
-              <Ionicons name="search" size={16} color="#888" style={{ marginRight: 8 }} />
-              <TextInput style={styles.searchInput} placeholder="Search movies..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} />
+              
+              {/* Genres Dropdown Trigger */}
+              <View style={{ position: 'relative' }}>
+                <Pressable 
+                  style={styles.genreDropdownTrigger} 
+                  onPress={() => setIsDropdownOpen(!isDropdownOpen)}
+                >
+                  <Text style={[styles.filterLink, GENRES.includes(activeFilter as any) && styles.filterLinkActive]}>Genres</Text>
+                  <Ionicons name={isDropdownOpen ? "caret-up" : "caret-down"} size={14} color="#e5e5e5" />
+                </Pressable>
+
+                {/* The Dropdown Menu */}
+                {isDropdownOpen && (
+                  <View style={styles.genreDropdownMenu}>
+                    {GENRES.map(genre => (
+                      <Pressable 
+                        key={genre} 
+                        style={styles.dropdownItem} 
+                        onPress={() => { setActiveFilter(genre); setIsDropdownOpen(false); }}
+                      >
+                        <Text style={[styles.dropdownItemText, activeFilter === genre && styles.filterLinkActive]}>{genre}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+              </View>
             </View>
+
+            {/* Collapsible Search Bar */}
+            <View style={styles.rightIcons}>
+              {isSearchExpanded ? (
+                <View style={styles.searchBoxActive}>
+                  <Ionicons name="search" size={20} color="#fff" style={{ marginRight: 8 }} />
+                  <TextInput 
+                    style={styles.searchInput} 
+                    placeholder="Titles, people, genres" 
+                    placeholderTextColor="#888" 
+                    value={searchQuery} 
+                    onChangeText={setSearchQuery} 
+                    autoFocus 
+                    onBlur={() => { if (!searchQuery.trim()) setIsSearchExpanded(false); }}
+                  />
+                  {searchQuery.trim().length > 0 && (
+                    <Pressable onPress={() => setSearchQuery('')}>
+                      <Ionicons name="close" size={20} color="#fff" />
+                    </Pressable>
+                  )}
+                </View>
+              ) : (
+                <Pressable onPress={() => setIsSearchExpanded(true)} style={styles.iconButton}>
+                  <Ionicons name="search" size={24} color="#fff" />
+                </Pressable>
+              )}
+
+              {/* Profile Avatar (Settings) */}
+              <Pressable onPress={() => router.push('/settings')} style={styles.profileButton}>
+                <Image source={{ uri: 'https://api.dicebear.com/7.x/avataaars/png?seed=vstream&backgroundColor=e50914' }} style={styles.profileAvatar} />
+                <Ionicons name="caret-down" size={12} color="#fff" style={{ marginLeft: 4 }} />
+              </Pressable>
+            </View>
+
           </View>
         )}
       </View>
@@ -234,14 +260,9 @@ export default function HomeScreen() {
         
         {heroMovie && (
           <View style={[styles.heroContainer, { height: heroHeight }]}>
-            
             {Platform.OS === 'web' ? (
               // @ts-ignore
-              <img 
-                src={heroMovie.backdrop_url || heroMovie.poster_url || ''} 
-                style={{ position: 'absolute', width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center top', opacity: 0.9 }} 
-                alt="Hero Backdrop"
-              />
+              <img src={heroMovie.backdrop_url || heroMovie.poster_url || ''} style={{ position: 'absolute', width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center top', opacity: 0.9 }} alt="Hero Backdrop" />
             ) : (
               <Image source={{ uri: heroMovie.backdrop_url || heroMovie.poster_url || '' }} style={styles.heroImage} resizeMode="cover" />
             )}
@@ -256,11 +277,11 @@ export default function HomeScreen() {
               )}
               <View style={styles.heroButtonsRow}>
                 <Pressable style={styles.heroPlayButton} onPress={() => router.push(`/movie/${heroMovie.id}`)}>
-                  <Ionicons name="play" size={18} color="#000" />
+                  <Ionicons name="play" size={24} color="#000" />
                   <Text style={styles.heroPlayButtonText}>Play</Text>
                 </Pressable>
                 <Pressable style={styles.heroWatchlistButton} onPress={() => router.push(`/movie/${heroMovie.id}`)}>
-                  <Ionicons name="add" size={18} color="#fff" />
+                  <Ionicons name="information-circle-outline" size={24} color="#fff" />
                   <Text style={styles.heroWatchlistButtonText}>More Info</Text>
                 </Pressable>
               </View>
@@ -277,8 +298,8 @@ export default function HomeScreen() {
                  <TextInput style={styles.searchInput} placeholder="Search movies..." placeholderTextColor="#666" value={searchQuery} onChangeText={setSearchQuery} />
                </View>
                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 20 }}>
-                 {FILTERS.map((filter) => (
-                   <Pressable key={filter} onPress={() => setActiveFilter(filter)} style={[styles.mobileFilterPill, filter === activeFilter && styles.mobileFilterPillActive]}>
+                 {[...MAIN_FILTERS, ...GENRES].map((filter) => (
+                   <Pressable key={filter} onPress={() => setActiveFilter(filter as any)} style={[styles.mobileFilterPill, filter === activeFilter && styles.mobileFilterPillActive]}>
                      <Text style={[styles.mobileFilterPillText, filter === activeFilter && styles.mobileFilterPillTextActive]}>{filter}</Text>
                    </Pressable>
                  ))}
@@ -368,20 +389,30 @@ const styles = StyleSheet.create({
   
   unifiedHeader: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 40, width: '100%', maxWidth: 1600, alignSelf: 'center' },
   headerLeft: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
-  headerRight: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 20 },
+  headerRight: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 40 },
+  
   logo: { fontSize: 32, fontWeight: 'bold', color: '#e50914', marginRight: 40 },
   primaryNav: { flexDirection: 'row', gap: 24 },
   navItem: { paddingVertical: 5 },
   navText: { color: '#e5e5e5', fontSize: 13, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   navTextActive: { color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,1)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   
-  desktopCategoryScroll: { flexShrink: 1, maxWidth: 600 },
-  categoryNav: { flexDirection: 'row', gap: 20, alignItems: 'center', paddingHorizontal: 10 },
+  mainFiltersNav: { flexDirection: 'row', gap: 20, alignItems: 'center' },
   filterLink: { color: '#e5e5e5', fontSize: 13, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   filterLinkActive: { color: '#fff', fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,1)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5 },
   
-  searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(30,30,30,0.8)', borderRadius: 4, paddingHorizontal: 12, paddingVertical: 6, width: 220, borderWidth: 1, borderColor: '#333' },
-  searchInput: { flex: 1, color: '#fff', fontSize: 13, outlineStyle: 'none' },
+  genreDropdownTrigger: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  genreDropdownMenu: { position: 'absolute', top: 30, left: -20, backgroundColor: 'rgba(20,20,20,0.95)', borderWidth: 1, borderColor: '#333', borderRadius: 4, paddingVertical: 10, minWidth: 160, zIndex: 150 },
+  dropdownItem: { paddingVertical: 10, paddingHorizontal: 20 },
+  dropdownItemText: { color: '#e5e5e5', fontSize: 13, fontWeight: '500' },
+
+  rightIcons: { flexDirection: 'row', alignItems: 'center', gap: 20 },
+  iconButton: { padding: 5 },
+  searchBoxActive: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.7)', borderWidth: 1, borderColor: '#fff', paddingHorizontal: 10, paddingVertical: 6, width: 260 },
+  searchInput: { flex: 1, color: '#fff', fontSize: 14, outlineStyle: 'none' },
+
+  profileButton: { flexDirection: 'row', alignItems: 'center' },
+  profileAvatar: { width: 32, height: 32, borderRadius: 4 },
 
   mobileSearchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', borderRadius: 8, marginBottom: 16, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: '#2a2a2a' },
   mobileFilterPill: { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 999, backgroundColor: '#121212', borderWidth: 1, borderColor: '#2a2a2a' },
@@ -390,23 +421,18 @@ const styles = StyleSheet.create({
   mobileFilterPillTextActive: { color: '#fff' },
 
   heroContainer: { width: '100%', position: 'relative', overflow: 'hidden' },
-  heroImage: { 
-    ...StyleSheet.absoluteFillObject, 
-    width: '100%', 
-    height: '100%', 
-    opacity: 0.9,
-  },
+  heroImage: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%', opacity: 0.9 },
   heroContent: { position: 'absolute', bottom: '15%', left: 20, right: 20, zIndex: 10 },
   heroContentDesktop: { left: 40, width: '45%', bottom: '12%' },
   
   heroTitle: { color: '#fff', fontSize: 24, fontWeight: 'bold', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 4, marginBottom: 8 },
-  heroTitleDesktop: { fontSize: 34, lineHeight: 40 },
-  heroDescription: { color: '#e5e5e5', fontSize: 14, lineHeight: 20, marginBottom: 16, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
-  heroButtonsRow: { flexDirection: 'row', gap: 10 },
-  heroPlayButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingVertical: 8, paddingHorizontal: 20, borderRadius: 4, gap: 6 },
-  heroPlayButtonText: { color: '#000', fontSize: 14, fontWeight: 'bold' },
-  heroWatchlistButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(51, 51, 51, 0.8)', paddingVertical: 8, paddingHorizontal: 20, borderRadius: 4, gap: 6 },
-  heroWatchlistButtonText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+  heroTitleDesktop: { fontSize: 44, lineHeight: 50 },
+  heroDescription: { color: '#e5e5e5', fontSize: 16, lineHeight: 24, marginBottom: 20, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  heroButtonsRow: { flexDirection: 'row', gap: 12 },
+  heroPlayButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', paddingVertical: 10, paddingHorizontal: 24, borderRadius: 4, gap: 10 },
+  heroPlayButtonText: { color: '#000', fontSize: 16, fontWeight: 'bold' },
+  heroWatchlistButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(81, 81, 81, 0.7)', paddingVertical: 10, paddingHorizontal: 24, borderRadius: 4, gap: 10 },
+  heroWatchlistButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
 
   section: { marginBottom: 30 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#e5e5e5', marginBottom: 12 },
