@@ -83,16 +83,17 @@ export async function onRequest(context) {
       cors_origin: '*' 
     };
 
-    // ---> THE FIX: Using the official Mux input array for subtitles <---
+    // ---> THE CRITICAL FIX: Empty object added as the first array item <---
     if (body.subtitleUrl) { 
       payload.new_asset_settings.input = [
+        {}, // REQUIRED BY MUX: The first item must represent the main video file
         { 
           url: body.subtitleUrl, 
           type: 'text', 
           text_type: 'subtitles', 
           language_code: 'en', 
           name: 'English', 
-          closed_captions: false 
+          closed_captions: true 
         }
       ]; 
     }
