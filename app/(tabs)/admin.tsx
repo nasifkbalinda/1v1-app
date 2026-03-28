@@ -190,6 +190,7 @@ export default function AdminScreen() {
     }
   };
 
+  // ---> RESTORED: The exact working DB queries for fetching movies and episodes <---
   const fetchAllMovies = useCallback(async () => { 
     setManageLoading(true); 
     const { data: mData, error: mError } = await supabase.from('movies').select('*, profiles(email)').order('title'); 
@@ -557,7 +558,8 @@ export default function AdminScreen() {
 
   return (
     <View style={styles.container}>
-      {/* ---> NEW: App-level Back Button for Admin Panel <--- */}
+      
+      {/* ---> RESTORED: App-level Back Button for Admin Panel <--- */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'web' ? 30 : 60, paddingHorizontal: 20, paddingBottom: 15, backgroundColor: '#111', borderBottomWidth: 1, borderBottomColor: '#222' }}>
         <Pressable onPress={() => router.push('/')} style={{ padding: 8, backgroundColor: '#333', borderRadius: 20, marginRight: 15 }}>
           <Ionicons name="arrow-back" size={22} color="#fff" />
@@ -633,7 +635,6 @@ export default function AdminScreen() {
               <Pressable style={[styles.subTabButton, uploadMode === 'episode' && styles.tabButtonActive]} onPress={() => setUploadMode('episode')}><Text style={[styles.subTabButtonLabel, uploadMode === 'episode' && styles.subTabButtonLabelActive]}>Episode</Text></Pressable>
             </View>
 
-            {/* ---> FEATURED TOGGLE UI (Works for Movie & TV Series) <--- */}
             {(uploadMode === 'movie' || uploadMode === 'tvseries') && (
               <View style={styles.featuredToggleContainer}>
                 <Text style={styles.label}>Feature on Home Screen Carousel?</Text>
@@ -753,7 +754,6 @@ export default function AdminScreen() {
                   <View style={styles.editSection}>
                     <Text style={styles.label}>Edit {editingMovie.type}</Text>
                     
-                    {/* ---> EDIT FEATURED TOGGLE UI <--- */}
                     <View style={[styles.featuredToggleContainer, { marginBottom: 15 }]}>
                         <Text style={styles.label}>Feature on Home Screen?</Text>
                         <Switch value={editIsFeatured} onValueChange={setEditIsFeatured} trackColor={{ false: "#333", true: "#e50914" }} />
@@ -1033,13 +1033,16 @@ const styles = StyleSheet.create({
   taskErrorText: { color: '#ef4444' },
   manageItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#111', borderWidth: 1, borderColor: '#2a2a2a', marginBottom: 8 },
   checkboxZone: { padding: 5, marginRight: 8 },
-  manageInfo: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  manageTitle: { color: '#fff', fontWeight: 'bold' },
-  featuredBadge: { backgroundColor: '#eab308', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  featuredBadgeText: { color: '#000', fontSize: 10, fontWeight: 'bold' },
-  manageButtonSecondary: { backgroundColor: '#374151', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999 },
-  manageButtonText: { color: '#fff', fontWeight: 'bold' },
-  editSection: { backgroundColor: '#111', padding: 20, borderRadius: 15 },
+  manageInfo: { flex: 1, marginRight: 12, alignItems: 'flex-start' },
+  manageTitle: { fontSize: 15, fontWeight: '600', color: '#fff', marginBottom: 4 },
+  manageMeta: { fontSize: 13, color: '#888' },
+  manageActions: { flexDirection: 'row', gap: 6 },
+  manageButton: { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 999 },
+  manageButtonSecondary: { backgroundColor: '#374151' },
+  manageButtonTrash: { backgroundColor: '#b91c1c' },
+  manageButtonRestore: { backgroundColor: '#16a34a' },
+  manageButtonText: { fontSize: 13, fontWeight: '600', color: '#fff' },
+  editSection: { backgroundColor: '#111', padding: 20, borderRadius: 15, borderLeftWidth: 4, borderLeftColor: '#e50914' },
   editImageContainer: { flexDirection: 'row', gap: 15, marginBottom: 20, alignItems: 'flex-start' },
   editPosterPreview: { width: 80, aspectRatio: 2/3, borderRadius: 8, backgroundColor: '#222', borderWidth: 1, borderColor: '#333' },
   editBackdropPreview: { width: 140, aspectRatio: 16/9, borderRadius: 8, backgroundColor: '#222', borderWidth: 1, borderColor: '#333' },
@@ -1075,4 +1078,6 @@ const styles = StyleSheet.create({
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: '#2a2a2a' },
   searchInput: { flex: 1, color: '#fff', fontSize: 14, outlineStyle: 'none' },
   featuredToggleContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15, backgroundColor: '#111', borderRadius: 10, marginBottom: 20, borderWidth: 1, borderColor: '#222' },
+  featuredBadge: { backgroundColor: '#eab308', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginTop: 4, alignSelf: 'flex-start' },
+  featuredBadgeText: { color: '#000', fontSize: 10, fontWeight: 'bold' },
 });
