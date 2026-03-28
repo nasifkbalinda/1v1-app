@@ -12,7 +12,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; backdrop_url?: string | null; video_url: string | null; category: string | null; type: string | null; };
 type Episode = { id: string; season_number: number; episode_number: number; title: string; video_url: string | null; };
 
-// ---> MASSIVE UPGRADE: Custom Web Player to fix CC hiding and Button Overlaps <---
 function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: string; initialTime: number; onTimeUpdate: (time: number) => void; title: string; onBack: () => void; }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -22,7 +21,10 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
   const [time, setTime] = useState(initialTime);
   const [duration, setDuration] = useState(0);
   const [showControls, setShowControls] = useState(true);
+  
   const [isMuted, setIsMuted] = useState(false);
+  const [volume, setVolume] = useState(1); // ---> NEW: Volume state <---
+  
   const [ccEnabled, setCcEnabled] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   
@@ -46,7 +48,7 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
         const Hls = HlsModule.default;
         if (Hls.isSupported()) {
           const hls = new Hls({ startPosition: initialTime });
-          hlsRef.current = hls; // Store reference to toggle CC later
+          hlsRef.current = hls; 
           const hlsUrl = url.includes('.m3u8') ? url : `${url}.m3u8`;
           hls.loadSource(hlsUrl); hls.attachMedia(video); hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(() => {}); });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -55,9 +57,16 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
       });
     }
 
-    const handleFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    const handleFsChange = () => {
+      setIsFullscreen(!!(document.fullscreenElement || document.webkitFullscreenElement));
+    };
     document.addEventListener('fullscreenchange', handleFsChange);
-    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+    document.addEventListener('webkitfullscreenchange', handleFsChange);
+    
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      document.removeEventListener('webkitfullscreenchange', handleFsChange);
+    };
   }, [url, initialTime]);
 
   const togglePlay = () => {
@@ -66,14 +75,26 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
     }
   };
 
+  // ---> UPDATED: Bulletproof Fullscreen logic with iOS Safari Fallback <---
   const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      containerRef.current?.requestFullscreen().catch(() => {
-         const video = videoRef.current as any;
-         if (video && video.webkitEnterFullscreen) video.webkitEnterFullscreen();
-      });
+    const video = videoRef.current as any;
+    const container = containerRef.current as any;
+    
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+      if (container?.requestFullscreen) {
+        container.requestFullscreen();
+      } else if (container?.webkitRequestFullscreen) {
+        container.webkitRequestFullscreen();
+      } else if (video?.webkitEnterFullscreen) {
+        // Ultimate fallback for iPhones
+        video.webkitEnterFullscreen();
+      }
     } else {
-      document.exitFullscreen();
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      } else if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+      }
     }
   };
 
@@ -96,6 +117,21 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
     }
   };
 
+  const handleVolumeChange = (e: any) => {
+    const val = Number(e.target.value);
+    setVolume(val);
+    if (videoRef.current) {
+       videoRef.current.volume = val;
+       if (val > 0 && isMuted) {
+           videoRef.current.muted = false;
+           setIsMuted(false);
+       } else if (val === 0 && !isMuted) {
+           videoRef.current.muted = true;
+           setIsMuted(true);
+       }
+    }
+  };
+
   const formatTime = (sec: number) => {
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
@@ -114,7 +150,6 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
         ref={videoRef} 
         autoPlay 
         playsInline 
-        // controls={false} -> This hides the ugly native browser controls completely!
         style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         onTimeUpdate={() => { setTime(videoRef.current?.currentTime || 0); onTimeUpdate(videoRef.current?.currentTime || 0); }}
         onDurationChange={() => setDuration(videoRef.current?.duration || 0)}
@@ -137,19 +172,34 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
               onChange={(e) => { if(videoRef.current) videoRef.current.currentTime = Number(e.target.value); }}
               style={{ width: '100%', cursor: 'pointer', accentColor: '#e50914', height: '4px', marginBottom: '15px' }} 
            />
-           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                  <Pressable onPress={togglePlay}><Ionicons name={isPlaying ? "pause" : "play"} size={28} color="#fff" /></Pressable>
-                 <Pressable onPress={() => { if(videoRef.current) { videoRef.current.muted = !isMuted; setIsMuted(!isMuted); } }}>
-                    <Ionicons name={isMuted ? "volume-mute" : "volume-high"} size={24} color="#fff" />
-                 </Pressable>
-                 <span style={{ color: '#fff', fontSize: '14px', fontWeight: 'bold' }}>{formatTime(time)} / {formatTime(duration)}</span>
                  
-                 {/* ---> CC BUTTON PERMANENTLY VISIBLE HERE <--- */}
-                 <Pressable onPress={toggleCC}><Ionicons name={ccEnabled ? "subtitles" : "subtitles-outline"} size={24} color={ccEnabled ? "#e50914" : "#fff"} /></Pressable>
+                 {/* ---> UPDATED: Volume icon WITH slider <--- */}
+                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                     <Pressable onPress={() => { if(videoRef.current) { videoRef.current.muted = !isMuted; setIsMuted(!isMuted); } }}>
+                        <Ionicons name={isMuted || volume === 0 ? "volume-mute" : "volume-high"} size={24} color="#fff" />
+                     </Pressable>
+                     <input 
+                        type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume}
+                        onChange={handleVolumeChange}
+                        style={{ width: '60px', accentColor: '#e50914', cursor: 'pointer' }}
+                     />
+                 </div>
+
+                 <span style={{ color: '#fff', fontSize: '13px', fontWeight: 'bold' }}>{formatTime(time)} / {formatTime(duration)}</span>
+                 
+                 {/* ---> UPDATED: Bulletproof CC Text Button <--- */}
+                 <Pressable onPress={toggleCC} style={{ marginLeft: 5 }}>
+                    <div style={{ border: `1.5px solid ${ccEnabled ? '#e50914' : '#fff'}`, borderRadius: '4px', padding: '1px 6px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                       <span style={{ color: ccEnabled ? '#e50914' : '#fff', fontSize: '12px', fontWeight: 'bold' }}>CC</span>
+                    </div>
+                 </Pressable>
               </div>
 
-              {/* ---> YOUR EXACT REQUESTED LAYOUT: Minimize, Fullscreen, Back <--- */}
+              {/* Exact Requested Layout: Minimize, Fullscreen, Back */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
                  <Pressable onPress={toggleMinimize}><Ionicons name="browsers-outline" size={22} color="#fff" /></Pressable>
                  <Pressable onPress={toggleFullscreen}><Ionicons name={isFullscreen ? "contract" : "expand"} size={24} color="#fff" /></Pressable>
@@ -356,7 +406,7 @@ export default function TheaterScreen() {
   return (
     <View style={styles.container}>
       
-      {/* ---> We hide the ugly absolute back button on Web because our Custom Player has one inside! <--- */}
+      {/* Hide native back button when web custom player is active to avoid showing two back buttons */}
       {!(Platform.OS === 'web' && isPlaying) && (
         <View style={[styles.header, { top: Platform.OS === 'web' ? 20 : insets.top + 10 }]}>
           <Pressable onPress={() => router.back()} style={styles.backButton}><Ionicons name="arrow-back" size={24} color="#fff" /></Pressable>
