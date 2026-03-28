@@ -35,7 +35,6 @@ export default function AdminScreen() {
   const [posterFile, setPosterFile] = useState<any | null>(null);
   const [backdropFile, setBackdropFile] = useState<any | null>(null);
   
-  // Featured toggle state
   const [isFeatured, setIsFeatured] = useState(false);
   
   const [videoFile, setVideoFile] = useState<any | null>(null);
@@ -558,6 +557,14 @@ export default function AdminScreen() {
 
   return (
     <View style={styles.container}>
+      {/* ---> NEW: App-level Back Button for Admin Panel <--- */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'web' ? 30 : 60, paddingHorizontal: 20, paddingBottom: 15, backgroundColor: '#111', borderBottomWidth: 1, borderBottomColor: '#222' }}>
+        <Pressable onPress={() => router.push('/')} style={{ padding: 8, backgroundColor: '#333', borderRadius: 20, marginRight: 15 }}>
+          <Ionicons name="arrow-back" size={22} color="#fff" />
+        </Pressable>
+        <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold' }}>Admin Dashboard</Text>
+      </View>
+
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         
         <View style={styles.tabRow}>
@@ -851,7 +858,6 @@ export default function AdminScreen() {
                         <Text style={styles.manageTitle}>{m.title}</Text>
                         <View style={{flexDirection: 'row', alignItems: 'center', gap: 6}}>
                           <Text style={styles.manageMeta}>{m.type} • Uploaded by: {m.profiles?.email || 'Super Admin'}</Text>
-                          {/* ---> NEW: FEATURED BADGE <--- */}
                           {m.is_featured && <View style={styles.featuredBadge}><Text style={styles.featuredBadgeText}>FEATURED</Text></View>}
                         </View>
                       </View>
@@ -985,7 +991,7 @@ export default function AdminScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0a0a0a' },
   scroll: { flex: 1 },
-  scrollContent: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 100 },
+  scrollContent: { paddingTop: 20, paddingHorizontal: 20, paddingBottom: 100 },
   tabRow: { flexDirection: 'row', backgroundColor: '#111', borderRadius: 999, padding: 4, marginBottom: 24, borderWidth: 1, borderColor: '#1f1f1f' },
   tabButton: { flex: 1, paddingVertical: 10, borderRadius: 999, alignItems: 'center' },
   tabButtonActive: { backgroundColor: '#e50914' },
@@ -1027,16 +1033,13 @@ const styles = StyleSheet.create({
   taskErrorText: { color: '#ef4444' },
   manageItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderRadius: 10, backgroundColor: '#111', borderWidth: 1, borderColor: '#2a2a2a', marginBottom: 8 },
   checkboxZone: { padding: 5, marginRight: 8 },
-  manageInfo: { flex: 1, marginRight: 12, alignItems: 'flex-start' }, // Changed to flex-start so badges sit nicely
-  manageTitle: { fontSize: 15, fontWeight: '600', color: '#fff', marginBottom: 4 },
-  manageMeta: { fontSize: 13, color: '#888' },
-  manageActions: { flexDirection: 'row', gap: 6 },
-  manageButton: { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 999 },
-  manageButtonSecondary: { backgroundColor: '#374151' },
-  manageButtonTrash: { backgroundColor: '#b91c1c' },
-  manageButtonRestore: { backgroundColor: '#16a34a' },
-  manageButtonText: { fontSize: 13, fontWeight: '600', color: '#fff' },
-  editSection: { backgroundColor: '#111', padding: 20, borderRadius: 15, borderLeftWidth: 4, borderLeftColor: '#e50914' },
+  manageInfo: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  manageTitle: { color: '#fff', fontWeight: 'bold' },
+  featuredBadge: { backgroundColor: '#eab308', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  featuredBadgeText: { color: '#000', fontSize: 10, fontWeight: 'bold' },
+  manageButtonSecondary: { backgroundColor: '#374151', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999 },
+  manageButtonText: { color: '#fff', fontWeight: 'bold' },
+  editSection: { backgroundColor: '#111', padding: 20, borderRadius: 15 },
   editImageContainer: { flexDirection: 'row', gap: 15, marginBottom: 20, alignItems: 'flex-start' },
   editPosterPreview: { width: 80, aspectRatio: 2/3, borderRadius: 8, backgroundColor: '#222', borderWidth: 1, borderColor: '#333' },
   editBackdropPreview: { width: 140, aspectRatio: 16/9, borderRadius: 8, backgroundColor: '#222', borderWidth: 1, borderColor: '#333' },
@@ -1071,9 +1074,5 @@ const styles = StyleSheet.create({
   leaderboardViews: { fontSize: 16, fontWeight: 'bold', color: '#e50914' },
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: '#2a2a2a' },
   searchInput: { flex: 1, color: '#fff', fontSize: 14, outlineStyle: 'none' },
-
-  // ---> NEW STYLES: Featured Toggle & Badge <---
   featuredToggleContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15, backgroundColor: '#111', borderRadius: 10, marginBottom: 20, borderWidth: 1, borderColor: '#222' },
-  featuredBadge: { backgroundColor: '#eab308', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginTop: 4, alignSelf: 'flex-start' },
-  featuredBadgeText: { color: '#000', fontSize: 10, fontWeight: 'bold' },
 });

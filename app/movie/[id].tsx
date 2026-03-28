@@ -2,7 +2,7 @@
 import { addDownloadedMovie, isMovieDownloaded } from '@/lib/downloads';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
-import { File, Paths } from 'expo-file-system'; // ---> THE FINAL FIX: Using the brand new SDK 54 Object API <---
+import { File, Paths } from 'expo-file-system';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
@@ -12,19 +12,41 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; backdrop_url?: string | null; video_url: string | null; category: string | null; type: string | null; };
 type Episode = { id: string; season_number: number; episode_number: number; title: string; video_url: string | null; };
 
-function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initialTime: number; onTimeUpdate: (time: number) => void }) {
+// ---> MASSIVE UPGRADE: Custom Web Player to fix CC hiding and Button Overlaps <---
+function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: string; initialTime: number; onTimeUpdate: (time: number) => void; title: string; onBack: () => void; }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const hlsRef = useRef<any>(null);
+  
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [time, setTime] = useState(initialTime);
+  const [duration, setDuration] = useState(0);
+  const [showControls, setShowControls] = useState(true);
+  const [isMuted, setIsMuted] = useState(false);
+  const [ccEnabled, setCcEnabled] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  
+  const controlsTimeoutRef = useRef<any>(null);
+
+  const resetControlsTimer = () => {
+    setShowControls(true);
+    clearTimeout(controlsTimeoutRef.current);
+    controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3500);
+  };
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !url) return;
     const isMP4 = url.toLowerCase().includes('.mp4') || url.includes('highest.mp4');
+    
     if (isMP4) {
-      video.src = url; video.currentTime = initialTime; video.play().catch(e => console.log("Autoplay blocked:", e));
+      video.src = url; video.currentTime = initialTime; video.play().catch(() => {});
     } else {
       import('hls.js').then((HlsModule) => {
         const Hls = HlsModule.default;
         if (Hls.isSupported()) {
           const hls = new Hls({ startPosition: initialTime });
+          hlsRef.current = hls; // Store reference to toggle CC later
           const hlsUrl = url.includes('.m3u8') ? url : `${url}.m3u8`;
           hls.loadSource(hlsUrl); hls.attachMedia(video); hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(() => {}); });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -32,20 +54,115 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate }: { url: string; initial
         }
       });
     }
+
+    const handleFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, [url, initialTime]);
 
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    const handleTimeUpdate = () => onTimeUpdate(video.currentTime);
-    video.addEventListener('timeupdate', handleTimeUpdate);
-    return () => video.removeEventListener('timeupdate', handleTimeUpdate);
-  }, [onTimeUpdate]);
+  const togglePlay = () => {
+    if (videoRef.current) {
+      if (videoRef.current.paused) videoRef.current.play(); else videoRef.current.pause();
+    }
+  };
 
-  return <video ref={videoRef} controls autoPlay playsInline style={{ width: '100%', height: '100%', backgroundColor: '#000' }} />;
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      containerRef.current?.requestFullscreen().catch(() => {
+         const video = videoRef.current as any;
+         if (video && video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  };
+
+  const toggleMinimize = () => {
+    if (document.pictureInPictureEnabled && videoRef.current) {
+       if (document.pictureInPictureElement) document.exitPictureInPicture();
+       else videoRef.current.requestPictureInPicture();
+    }
+  };
+
+  const toggleCC = () => {
+    if (hlsRef.current) {
+      const current = hlsRef.current.subtitleTrack;
+      hlsRef.current.subtitleTrack = current === -1 ? 0 : -1;
+      setCcEnabled(hlsRef.current.subtitleTrack !== -1);
+    } else if (videoRef.current && videoRef.current.textTracks.length > 0) {
+      const track = videoRef.current.textTracks[0];
+      track.mode = track.mode === 'showing' ? 'hidden' : 'showing';
+      setCcEnabled(track.mode === 'showing');
+    }
+  };
+
+  const formatTime = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  return (
+    <div 
+      ref={containerRef}
+      style={{ width: '100%', height: '100%', backgroundColor: '#000', position: 'relative' }}
+      onMouseMove={resetControlsTimer}
+      onClick={resetControlsTimer}
+      onMouseLeave={() => setShowControls(false)}
+    >
+      <video 
+        ref={videoRef} 
+        autoPlay 
+        playsInline 
+        // controls={false} -> This hides the ugly native browser controls completely!
+        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+        onTimeUpdate={() => { setTime(videoRef.current?.currentTime || 0); onTimeUpdate(videoRef.current?.currentTime || 0); }}
+        onDurationChange={() => setDuration(videoRef.current?.duration || 0)}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onClick={togglePlay}
+      />
+
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none', transition: 'opacity 0.3s', opacity: showControls ? 1 : 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+        
+        {/* Top Gradient Bar */}
+        <div style={{ padding: '20px', display: 'flex', alignItems: 'center', pointerEvents: 'auto', background: 'linear-gradient(to bottom, rgba(0,0,0,0.8), transparent)' }}>
+           <span style={{ color: '#fff', fontSize: '18px', fontWeight: 'bold', textShadow: '1px 1px 3px #000' }}>{title}</span>
+        </div>
+
+        {/* Bottom Custom Control Bar */}
+        <div style={{ padding: '20px', pointerEvents: 'auto', background: 'linear-gradient(to top, rgba(0,0,0,0.8), transparent)' }}>
+           <input 
+              type="range" min="0" max={duration || 0} value={time} 
+              onChange={(e) => { if(videoRef.current) videoRef.current.currentTime = Number(e.target.value); }}
+              style={{ width: '100%', cursor: 'pointer', accentColor: '#e50914', height: '4px', marginBottom: '15px' }} 
+           />
+           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                 <Pressable onPress={togglePlay}><Ionicons name={isPlaying ? "pause" : "play"} size={28} color="#fff" /></Pressable>
+                 <Pressable onPress={() => { if(videoRef.current) { videoRef.current.muted = !isMuted; setIsMuted(!isMuted); } }}>
+                    <Ionicons name={isMuted ? "volume-mute" : "volume-high"} size={24} color="#fff" />
+                 </Pressable>
+                 <span style={{ color: '#fff', fontSize: '14px', fontWeight: 'bold' }}>{formatTime(time)} / {formatTime(duration)}</span>
+                 
+                 {/* ---> CC BUTTON PERMANENTLY VISIBLE HERE <--- */}
+                 <Pressable onPress={toggleCC}><Ionicons name={ccEnabled ? "subtitles" : "subtitles-outline"} size={24} color={ccEnabled ? "#e50914" : "#fff"} /></Pressable>
+              </div>
+
+              {/* ---> YOUR EXACT REQUESTED LAYOUT: Minimize, Fullscreen, Back <--- */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                 <Pressable onPress={toggleMinimize}><Ionicons name="browsers-outline" size={22} color="#fff" /></Pressable>
+                 <Pressable onPress={toggleFullscreen}><Ionicons name={isFullscreen ? "contract" : "expand"} size={24} color="#fff" /></Pressable>
+                 <Pressable onPress={onBack}><Ionicons name="close-circle-outline" size={28} color="#fff" /></Pressable>
+              </div>
+           </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url: string; onError: (msg: string) => void; initialTime: number; movieId: string; userId: string | null; }) {
+function VideoPlayerBlock({ url, onError, initialTime, movieId, userId, title, onBack }: { url: string; onError: (msg: string) => void; initialTime: number; movieId: string; userId: string | null; title: string; onBack: () => void; }) {
   const isWeb = Platform.OS === 'web';
   const player = !isWeb ? useVideoPlayer(url, (p) => { p.play(); }) : null;
   const hasCountedView = useRef(false);
@@ -75,7 +192,7 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId }: { url:
   return (
     <View style={styles.videoContainer}>
       {isWeb ? (
-        <WebHLSPlayer url={url} initialTime={initialTime} onTimeUpdate={() => {}} />
+        <WebHLSPlayer url={url} initialTime={initialTime} onTimeUpdate={() => {}} title={title} onBack={onBack} />
       ) : (
         <VideoView style={{ flex: 1 }} player={player!} nativeControls={true} fullscreenOptions={{ enable: true }} />
       )}
@@ -105,6 +222,7 @@ export default function TheaterScreen() {
 
   const [isDownloaded, setIsDownloaded] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
 
   const isOfflineMode = Boolean(paramLocalUri);
 
@@ -153,14 +271,7 @@ export default function TheaterScreen() {
         window.alert("Please log in or create an account to access this feature.");
         router.push('/');
       } else {
-        Alert.alert(
-          "Login Required", 
-          "Please log in or create an account to access this feature.", 
-          [
-            { text: "Cancel", style: "cancel" },
-            { text: "Log In", onPress: () => router.push('/') }
-          ]
-        );
+        Alert.alert("Login Required", "Please log in or create an account to access this feature.", [{ text: "Cancel", style: "cancel" }, { text: "Log In", onPress: () => router.push('/') }]);
       }
       return false;
     }
@@ -176,24 +287,18 @@ export default function TheaterScreen() {
     } catch (e) { console.error(e); }
   };
 
-  // ---> THE FIX: Migrated to Expo 54 Object-Oriented API <---
   const handleDownloadItem = async (videoUrl: string | null, targetId: string, title: string, posterUrl: string | null) => {
     if (!ensureAuthenticated()) return;
     if (!videoUrl) return;
-    if (downloadingId) {
-      Alert.alert("Wait", "Another download is already in progress.");
-      return;
-    }
+    if (downloadingId) { Alert.alert("Wait", "Another download is already in progress."); return; }
     
     let mp4Url = videoUrl.includes('stream.mux.com') ? (videoUrl.endsWith('.m3u8') ? videoUrl.replace('.m3u8', '/highest.mp4') : `${videoUrl}/highest.mp4`) : videoUrl;
     
     setDownloadingId(targetId);
+    setDownloadProgress(0);
 
     try {
-      // Creates a new file object targeting the phone's local Documents folder
       const destFile = new File(Paths.document, `${targetId}.mp4`);
-      
-      // Await the massive download directly into that file
       await File.downloadFileAsync(mp4Url, destFile);
       
       if (destFile.exists) {
@@ -206,70 +311,61 @@ export default function TheaterScreen() {
     } catch (e: any) { 
       Alert.alert("Download Error", e.message || String(e)); 
     } finally { 
-      setDownloadingId(null); 
+      setDownloadingId(null); setDownloadProgress(null); 
     }
   };
 
   const handlePlayMain = () => {
     if (!ensureAuthenticated()) return;
-    
     if (movie?.type === 'TV Series' && episodes.length > 0) {
       if (!activeEpisode) {
-        setCurrentVideoUrl(episodes[0].video_url);
-        setActiveEpisode(episodes[0]);
-        setExpandedSeason(episodes[0].season_number);
+        setCurrentVideoUrl(episodes[0].video_url); setActiveEpisode(episodes[0]); setExpandedSeason(episodes[0].season_number);
       }
-    } else {
-      setCurrentVideoUrl(movie?.video_url || null);
-    }
+    } else { setCurrentVideoUrl(movie?.video_url || null); }
     setIsPlaying(true);
   };
 
   const handlePlayEpisode = (ep: Episode) => {
     if (!ensureAuthenticated()) return;
-
-    setCurrentVideoUrl(ep.video_url);
-    setActiveEpisode(ep);
-    setIsPlaying(true);
+    setCurrentVideoUrl(ep.video_url); setActiveEpisode(ep); setIsPlaying(true);
   };
 
   const hasNextEpisode = activeEpisode ? episodes.findIndex(e => e.id === activeEpisode.id) < episodes.length - 1 : false;
   
   const handleNextEpisode = () => {
     if (!ensureAuthenticated()) return;
-
     if (!activeEpisode) return;
     const currentIndex = episodes.findIndex(e => e.id === activeEpisode.id);
     if (currentIndex !== -1 && currentIndex < episodes.length - 1) {
       const nextEp = episodes[currentIndex + 1];
-      setCurrentVideoUrl(nextEp.video_url);
-      setActiveEpisode(nextEp);
-      setExpandedSeason(nextEp.season_number);
-      setIsPlaying(true);
+      setCurrentVideoUrl(nextEp.video_url); setActiveEpisode(nextEp); setExpandedSeason(nextEp.season_number); setIsPlaying(true);
     }
   };
 
   const availableSeasons = Array.from(new Set(episodes.map(e => e.season_number))).sort((a,b) => a-b);
-
   const gridColumns = isDesktop ? 6 : (width > 550 ? 4 : 2);
   const gridGap = 10;
-  const gridPadding = 40; 
-  const safeCardWidth = (width - gridPadding - (gridGap * (gridColumns - 1))) / gridColumns;
+  const safeCardWidth = (width - 40 - (gridGap * (gridColumns - 1))) / gridColumns;
   const finalCardWidth = Math.min(safeCardWidth, 160);
 
   if (loading) return <View style={styles.container}><ActivityIndicator size="large" color="#e50914" /></View>;
   if (!movie) return <View style={styles.container}><Text style={{color:'#fff'}}>Not found.</Text></View>;
 
+  const displayTitle = activeEpisode ? `S${activeEpisode.season_number} E${activeEpisode.episode_number} - ${activeEpisode.title}` : movie.title;
+
   return (
     <View style={styles.container}>
       
-      <View style={[styles.header, { top: Platform.OS === 'web' ? 20 : insets.top + 10 }]}>
-        <Pressable onPress={() => router.back()} style={styles.backButton}><Ionicons name="arrow-back" size={24} color="#fff" /></Pressable>
-      </View>
+      {/* ---> We hide the ugly absolute back button on Web because our Custom Player has one inside! <--- */}
+      {!(Platform.OS === 'web' && isPlaying) && (
+        <View style={[styles.header, { top: Platform.OS === 'web' ? 20 : insets.top + 10 }]}>
+          <Pressable onPress={() => router.back()} style={styles.backButton}><Ionicons name="arrow-back" size={24} color="#fff" /></Pressable>
+        </View>
+      )}
 
       <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 60 }}>
         {isPlaying && currentVideoUrl ? (
-          <VideoPlayerBlock url={currentVideoUrl} movieId={movie.id} userId={userId} initialTime={0} onError={()=>{}} />
+          <VideoPlayerBlock url={currentVideoUrl} movieId={movie.id} userId={userId} initialTime={0} onError={()=>{}} title={displayTitle} onBack={() => setIsPlaying(false)} />
         ) : (
           <View style={styles.posterBox}>
             <Image source={{ uri: movie.backdrop_url || movie.poster_url }} style={styles.mainPoster} resizeMode="cover" />
@@ -283,9 +379,7 @@ export default function TheaterScreen() {
           <Text style={styles.title} selectable={false}>{movie.title}</Text>
           
           {activeEpisode && isPlaying && (
-            <Text style={styles.activeEpisodeTitle} selectable={false}>
-              Now Playing: S{activeEpisode.season_number} E{activeEpisode.episode_number} - {activeEpisode.title}
-            </Text>
+            <Text style={styles.activeEpisodeTitle} selectable={false}>Now Playing: S{activeEpisode.season_number} E{activeEpisode.episode_number} - {activeEpisode.title}</Text>
           )}
 
           <Text style={styles.meta} selectable={false}>{movie.category} • {movie.type}</Text>
@@ -308,17 +402,8 @@ export default function TheaterScreen() {
               <Text style={styles.actionBtnText} selectable={false}>My List</Text>
             </Pressable>
 
-            {/* ---> UPDATED: Top Download Button with Loading Spinner <--- */}
             {!isDownloaded && !isOfflineMode && Platform.OS !== 'web' && (
-              <Pressable 
-                style={styles.actionBtn} 
-                onPress={() => handleDownloadItem(
-                  activeEpisode ? activeEpisode.video_url : movie.video_url, 
-                  activeEpisode ? activeEpisode.id : movie.id, 
-                  activeEpisode ? activeEpisode.title : movie.title, 
-                  movie.poster_url
-                )} 
-              >
+              <Pressable style={styles.actionBtn} onPress={() => handleDownloadItem(activeEpisode ? activeEpisode.video_url : movie.video_url, activeEpisode ? activeEpisode.id : movie.id, activeEpisode ? activeEpisode.title : movie.title, movie.poster_url)}>
                 {(downloadingId === movie.id || (activeEpisode && downloadingId === activeEpisode.id)) ? (
                   <ActivityIndicator size="small" color="#fff" style={{ marginBottom: 4 }} />
                 ) : (
@@ -336,53 +421,33 @@ export default function TheaterScreen() {
           {movie.type === 'TV Series' && availableSeasons.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle} selectable={false}>Episodes</Text>
-              
               {availableSeasons.map(seasonNum => {
                 const isExpanded = expandedSeason === seasonNum;
                 const seasonEpisodes = episodes.filter(ep => ep.season_number === seasonNum);
-
                 return (
                   <View key={`season-${seasonNum}`} style={styles.seasonAccordion}>
-                    <Pressable 
-                      style={styles.seasonHeader} 
-                      onPress={() => setExpandedSeason(isExpanded ? null : seasonNum)}
-                    >
+                    <Pressable style={styles.seasonHeader} onPress={() => setExpandedSeason(isExpanded ? null : seasonNum)}>
                       <Text style={styles.seasonHeaderText} selectable={false}>Season {seasonNum}</Text>
                       <Ionicons name={isExpanded ? "chevron-up" : "chevron-down"} size={20} color="#fff" />
                     </Pressable>
-
                     {isExpanded && (
                       <View style={styles.seasonEpisodesList}>
                         {seasonEpisodes.map(ep => {
                           const isActive = activeEpisode?.id === ep.id;
                           const isDownloadingThisEp = downloadingId === ep.id;
-
                           return (
                             <View key={ep.id} style={[styles.epRow, isActive && styles.activeEpRow]}>
-                              
                               <Pressable style={styles.epInfoContainer} onPress={() => handlePlayEpisode(ep)}>
                                 <View style={styles.epInfo}>
-                                  <Text style={[styles.epTitle, isActive && { color: '#e50914', fontWeight: 'bold' }]} selectable={false}>
-                                    {ep.episode_number}. {ep.title}
-                                  </Text>
+                                  <Text style={[styles.epTitle, isActive && { color: '#e50914', fontWeight: 'bold' }]} selectable={false}>{ep.episode_number}. {ep.title}</Text>
                                 </View>
                                 <Ionicons name={isActive ? "play-circle" : "play-circle-outline"} size={28} color={isActive ? "#e50914" : "#fff"} />
                               </Pressable>
-
-                              {/* ---> UPDATED: Episode Download Button with Loading Spinner <--- */}
                               {!isOfflineMode && Platform.OS !== 'web' && (
-                                <Pressable 
-                                  style={styles.epDownloadBtn} 
-                                  onPress={() => handleDownloadItem(ep.video_url, ep.id, ep.title, movie.poster_url)}
-                                >
-                                  {isDownloadingThisEp ? (
-                                    <ActivityIndicator size="small" color="#888" />
-                                  ) : (
-                                    <Ionicons name="download-outline" size={24} color="#fff" />
-                                  )}
+                                <Pressable style={styles.epDownloadBtn} onPress={() => handleDownloadItem(ep.video_url, ep.id, ep.title, movie.poster_url)}>
+                                  {isDownloadingThisEp ? <ActivityIndicator size="small" color="#888" /> : <Ionicons name="download-outline" size={24} color="#fff" />}
                                 </Pressable>
                               )}
-
                             </View>
                           );
                         })}
@@ -399,11 +464,7 @@ export default function TheaterScreen() {
               <Text style={styles.sectionTitle} selectable={false}>More Like This</Text>
               <View style={[styles.grid, { gap: gridGap }]}>
                 {similarMovies.map(m => (
-                  <Pressable 
-                    key={m.id} 
-                    style={[styles.gridItem, { width: finalCardWidth }]} 
-                    onPress={() => router.replace(`/movie/${m.id}`)}
-                  >
+                  <Pressable key={m.id} style={[styles.gridItem, { width: finalCardWidth }]} onPress={() => router.replace(`/movie/${m.id}`)}>
                     <Image source={{ uri: m.poster_url }} style={styles.gridImage} />
                   </Pressable>
                 ))}
@@ -421,8 +482,8 @@ const styles = StyleSheet.create({
   header: { position: 'absolute', left: 20, zIndex: 100 },
   backButton: { backgroundColor: 'rgba(0,0,0,0.6)', padding: 10, borderRadius: 24 },
   scroll: { flex: 1 },
-  videoContainer: { width: '100%', maxWidth: 960, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#000', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
-  posterBox: { width: '100%', maxWidth: 960, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#111', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
+  videoContainer: { width: '100%', maxWidth: 1200, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#000', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
+  posterBox: { width: '100%', maxWidth: 1200, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#111', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
   mainPoster: { width: '100%', height: '100%' },
   playOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)' },
   details: { padding: 20, maxWidth: 960, alignSelf: 'center', width: '100%' },
@@ -439,19 +500,16 @@ const styles = StyleSheet.create({
   description: { color: '#ccc', fontSize: 14, lineHeight: 22, marginTop: 10 },
   section: { marginTop: 40 },
   sectionTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 15 },
-  
   seasonAccordion: { marginBottom: 10, backgroundColor: '#111', borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: '#222' },
   seasonHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15, backgroundColor: '#1a1a1a' },
   seasonHeaderText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
   seasonEpisodesList: { padding: 10 },
-
   epRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 8, marginBottom: 5, borderWidth: 1, borderColor: 'transparent', backgroundColor: '#111' },
   activeEpRow: { backgroundColor: '#1a0a0b', borderColor: '#e50914' },
   epInfoContainer: { flex: 1, flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10 },
   epInfo: { flex: 1 },
   epTitle: { color: '#fff', fontSize: 14 },
   epDownloadBtn: { paddingVertical: 12, paddingHorizontal: 15, justifyContent: 'center', alignItems: 'center', borderLeftWidth: 1, borderLeftColor: '#333' },
-  
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   gridItem: { aspectRatio: 2/3, marginBottom: 10 },
   gridImage: { width: '100%', height: '100%', borderRadius: 4, backgroundColor: '#111' }
