@@ -26,7 +26,8 @@ export default function AdminScreen() {
   const [userRole, setUserRole] = useState<'super_admin' | 'manager' | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
 
-  const [activeSection, setActiveSection] = useState<'dashboard' | 'upload' | 'manage' | 'trash' | 'team'>('dashboard');
+  // ---> UPDATED: Added 'users' to activeSection state <---
+  const [activeSection, setActiveSection] = useState<'dashboard' | 'upload' | 'manage' | 'trash' | 'team' | 'users'>('dashboard');
   const [uploadMode, setUploadMode] = useState<'movie' | 'tvseries' | 'episode'>('movie');
   
   const [title, setTitle] = useState('');
@@ -87,6 +88,12 @@ export default function AdminScreen() {
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [teamSearchQuery, setTeamSearchQuery] = useState('');
   const [teamLoading, setTeamLoading] = useState(false);
+
+  // ---> NEW: User Management State <---
+  const [usersList, setUsersList] = useState<any[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [userTimeFilter, setUserTimeFilter] = useState<'all' | '7days' | '30days'>('all');
   
   const [platformStats, setPlatformStats] = useState({
     totalViews: 0, totalMovies: 0, totalSeries: 0, topCategory: 'N/A', topTitle: 'No Views Yet',
@@ -170,27 +177,90 @@ export default function AdminScreen() {
     } catch (e) { console.error(e); } finally { setTeamLoading(false); }
   }, [userRole]);
 
+  // ---> NEW: Fetch Users for Management Hub <---
+  const fetchUsersList = useCallback(async () => {
+    if (userRole !== 'super_admin') return;
+    setUsersLoading(true);
+    try {
+      let query = supabase.from('profiles').select('*').order('created_at', { ascending: false });
+      
+      if (userTimeFilter === '7days') {
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        query = query.gte('created_at', sevenDaysAgo);
+      } else if (userTimeFilter === '30days') {
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        query = query.gte('created_at', thirtyDaysAgo);
+      }
+
+      const { data, error } = await query;
+      if (!error && data) setUsersList(data);
+    } catch (e) { console.error(e); } finally { setUsersLoading(false); }
+  }, [userRole, userTimeFilter]);
+
+  // Refetch when time filter changes
+  useEffect(() => {
+    if (activeSection === 'users') fetchUsersList();
+  }, [userTimeFilter, activeSection, fetchUsersList]);
+
+  // ---> NEW: Cross-Platform Confirmation Dialog <---
+  const confirmAction = (title: string, message: string, onConfirm: () => void) => {
+    if (Platform.OS === 'web') {
+      if (window.confirm(`${title}\n\n${message}`)) {
+        onConfirm();
+      }
+    } else {
+      Alert.alert(title, message, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Confirm", style: "destructive", onPress: onConfirm }
+      ]);
+    }
+  };
+
+  // ---> NEW: User Moderation Actions <---
+  const handleSuspendUser = async (id: string, currentStatus: string) => {
+    const newStatus = currentStatus === 'suspended' ? 'active' : 'suspended';
+    confirmAction(
+      "Confirm Action", 
+      `Are you sure you want to ${newStatus === 'suspended' ? 'SUSPEND' : 'ACTIVATE'} this user?`,
+      async () => {
+        setUpdatingId(id);
+        await supabase.from('profiles').update({ status: newStatus }).eq('id', id);
+        fetchUsersList();
+        setUpdatingId(null);
+      }
+    );
+  };
+
+  const handleDeleteUserPermanently = async (id: string) => {
+    confirmAction(
+      "WARNING: Permanent Deletion", 
+      "This will permanently delete this user's profile. This action CANNOT be undone.",
+      async () => {
+        setDeletingId(id);
+        await supabase.from('profiles').delete().eq('id', id);
+        fetchUsersList();
+        setDeletingId(null);
+      }
+    );
+  };
+
   const handleToggleRole = async (targetId: string, currentRole: string) => {
     if (userRole !== 'super_admin') return;
     const safeCurrentRole = currentRole || 'user';
     const newRole = safeCurrentRole === 'manager' ? 'user' : 'manager';
-    const msg = `Change this user to ${newRole.toUpperCase()}?`;
-    if (Platform.OS === 'web' ? window.confirm(msg) : true) {
+    confirmAction("Change Role", `Change this user to ${newRole.toUpperCase()}?`, async () => {
       setUpdatingId(targetId);
       const { error } = await supabase.from('profiles').update({ role: newRole }).eq('id', targetId);
       if (error) {
         if (Platform.OS === 'web') window.alert("Failed to update: " + error.message);
         else Alert.alert("Error", "Failed to update: " + error.message);
-      } else {
-        if (Platform.OS === 'web') window.alert("Success! User role updated.");
-        else Alert.alert("Success", "User role updated.");
       }
       fetchTeamMembers();
+      if (activeSection === 'users') fetchUsersList();
       setUpdatingId(null);
-    }
+    });
   };
 
-  // ---> RESTORED: The exact working DB queries for fetching movies and episodes <---
   const fetchAllMovies = useCallback(async () => { 
     setManageLoading(true); 
     const { data: mData, error: mError } = await supabase.from('movies').select('*, profiles(email)').order('title'); 
@@ -534,7 +604,11 @@ export default function AdminScreen() {
   const updateLocalEpisode = (id: string, field: string, value: any) => { setEditEpisodes(prev => prev.map(ep => ep.id === id ? { ...ep, [field]: value } : ep)); };
   
   const handleDeleteEpisode = async (epId: string) => {
-    if (Platform.OS === 'web' ? window.confirm("Move to trash?") : true) { await supabase.from('episodes').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', epId); setEditEpisodes(prev => prev.filter(e => e.id !== epId)); fetchAllMovies(); }
+    confirmAction("Move to Trash?", "Are you sure you want to delete this episode?", async () => {
+       await supabase.from('episodes').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', epId); 
+       setEditEpisodes(prev => prev.filter(e => e.id !== epId)); 
+       fetchAllMovies();
+    });
   };
 
   const toggleManageSelection = (id: string) => { setSelectedManageIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]); };
@@ -542,16 +616,29 @@ export default function AdminScreen() {
 
   const handleBulkTrash = async () => { await supabase.from('movies').update({ status: 'trash', deleted_at: new Date().toISOString() }).in('id', selectedManageIds); setSelectedManageIds([]); fetchAllMovies(); };
   const handleBulkRestore = async () => { await supabase.from('movies').update({ status: 'active', deleted_at: null }).in('id', selectedTrashIds); setSelectedTrashIds([]); fetchAllMovies(); };
-  const handleBulkDeleteForever = async () => { if (Platform.OS === 'web' ? window.confirm("Delete forever?") : true) { await supabase.from('movies').delete().in('id', selectedTrashIds); setSelectedTrashIds([]); fetchAllMovies(); } };
+  const handleBulkDeleteForever = async () => { 
+     confirmAction("Delete Forever?", "This will permanently delete the selected items.", async () => {
+         await supabase.from('movies').delete().in('id', selectedTrashIds); 
+         setSelectedTrashIds([]); 
+         fetchAllMovies(); 
+     });
+  };
 
   const handleTrashMovie = async (id: string) => { setUpdatingId(id); await supabase.from('movies').update({ status: 'trash', deleted_at: new Date().toISOString() }).eq('id', id); fetchAllMovies(); setUpdatingId(null); };
   const handleRestoreMovie = async (id: string) => { setUpdatingId(id); await supabase.from('movies').update({ status: 'active', deleted_at: null }).eq('id', id); fetchAllMovies(); setUpdatingId(null); };
-  const handleDeleteForeverMovie = async (id: string) => { if (Platform.OS === 'web' ? window.confirm("Delete forever?") : true) { setDeletingId(id); await supabase.from('movies').delete().eq('id', id); fetchAllMovies(); setDeletingId(null); } };
+  const handleDeleteForeverMovie = async (id: string) => { confirmAction("Delete Forever?", "Permanently delete this movie?", async () => { setDeletingId(id); await supabase.from('movies').delete().eq('id', id); fetchAllMovies(); setDeletingId(null); }); };
   const handleRestoreEpisode = async (id: string) => { setUpdatingId(id); await supabase.from('episodes').update({ status: 'active', deleted_at: null }).eq('id', id); fetchAllMovies(); setUpdatingId(null); };
-  const handleDeleteForeverEpisode = async (id: string) => { if (Platform.OS === 'web' ? window.confirm("Delete forever?") : true) { setDeletingId(id); await supabase.from('episodes').delete().eq('id', id); fetchAllMovies(); setDeletingId(null); } };
+  const handleDeleteForeverEpisode = async (id: string) => { confirmAction("Delete Forever?", "Permanently delete this episode?", async () => { setDeletingId(id); await supabase.from('episodes').delete().eq('id', id); fetchAllMovies(); setDeletingId(null); }); };
 
   const activeMovies = manageMovies.filter((m) => m.status !== 'trash');
   const trashedMovies = manageMovies.filter((m) => m.status === 'trash');
+
+  // Utility format date function
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return 'N/A';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  };
 
   if (authChecking) return (<View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}><ActivityIndicator size="large" color="#e50914" /></View>);
   if (!isAuthorized) return null;
@@ -559,7 +646,6 @@ export default function AdminScreen() {
   return (
     <View style={styles.container}>
       
-      {/* ---> RESTORED: App-level Back Button for Admin Panel <--- */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'web' ? 30 : 60, paddingHorizontal: 20, paddingBottom: 15, backgroundColor: '#111', borderBottomWidth: 1, borderBottomColor: '#222' }}>
         <Pressable onPress={() => router.push('/')} style={{ padding: 8, backgroundColor: '#333', borderRadius: 20, marginRight: 15 }}>
           <Ionicons name="arrow-back" size={22} color="#fff" />
@@ -592,15 +678,21 @@ export default function AdminScreen() {
                  {statsLoading ? <ActivityIndicator color="#e50914" /> : <Ionicons name="refresh" size={24} color="#888" />}
                </Pressable>
              </View>
-             {/* Audience Stats */}
+             
              <Text style={{color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 15}}>Audience</Text>
              <View style={styles.statsGrid}>
-               <View style={[styles.statCard, { width: '23%', borderColor: '#6b7280' }]}><Ionicons name="people" size={24} color="#6b7280" style={styles.statIcon} /><Text style={styles.statValue}>{platformStats.totalUsers.toLocaleString()}</Text><Text style={styles.statLabel}>Total Users</Text></View>
+               {/* ---> UPDATED: Total Users is now clickable to open User Management Hub <--- */}
+               <Pressable style={[styles.statCard, { width: '23%', borderColor: '#6b7280' }]} onPress={() => setActiveSection('users')}>
+                  <Ionicons name="people" size={24} color="#6b7280" style={styles.statIcon} />
+                  <Text style={styles.statValue}>{platformStats.totalUsers.toLocaleString()}</Text>
+                  <Text style={styles.statLabel}>Total Users</Text>
+               </Pressable>
+               
                <View style={[styles.statCard, { width: '23%', borderColor: '#10b981' }]}><Text style={styles.statValue}>{platformStats.dau.toLocaleString()}</Text><Text style={styles.statLabel}>Daily (DAU)</Text></View>
                <View style={[styles.statCard, { width: '23%', borderColor: '#3b82f6' }]}><Text style={styles.statValue}>{platformStats.wau.toLocaleString()}</Text><Text style={styles.statLabel}>Weekly (WAU)</Text></View>
                <View style={[styles.statCard, { width: '23%', borderColor: '#8b5cf6' }]}><Text style={styles.statValue}>{platformStats.mau.toLocaleString()}</Text><Text style={styles.statLabel}>Monthly (MAU)</Text></View>
              </View>
-             {/* Content Stats */}
+             
              <Text style={{color: '#fff', fontSize: 18, fontWeight: 'bold', marginTop: 20, marginBottom: 15}}>Content</Text>
              <View style={styles.statsGrid}>
                <View style={[styles.statCard, { width: '23%' }]}><Ionicons name="eye" size={24} color="#e50914" style={styles.statIcon} /><Text style={styles.statValue}>{platformStats.totalViews.toLocaleString()}</Text><Text style={styles.statLabel}>Total Views</Text></View>
@@ -612,7 +704,7 @@ export default function AdminScreen() {
                   <Ionicons name="star" size={36} color="#eab308" />
                </View>
              </View>
-             {/* Leaderboard */}
+             
              <View style={styles.leaderboardSection}>
                <View style={{flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 15}}><Ionicons name="list" size={22} color="#fff" /><Text style={styles.leaderboardSectionTitle}>Content Leaderboard</Text></View>
                {platformStats.leaderboard.length === 0 ? <Text style={{color: '#666'}}>No content available.</Text> : platformStats.leaderboard.map((item, index) => (
@@ -624,6 +716,108 @@ export default function AdminScreen() {
                ))}
              </View>
            </View>
+        )}
+
+        {/* ---> NEW: User Management Hub <--- */}
+        {activeSection === 'users' && userRole === 'super_admin' && (
+          <View style={styles.dashboardContainer}>
+             <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20}}>
+               <Text style={styles.dashboardTitle}>User Management</Text>
+               <Pressable onPress={() => setActiveSection('dashboard')} style={{flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#333', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20}}>
+                 <Ionicons name="arrow-back" size={16} color="#fff" />
+                 <Text style={{color: '#fff', fontSize: 12, fontWeight: 'bold'}}>Back to Dashboard</Text>
+               </Pressable>
+             </View>
+
+             <View style={{flexDirection: 'row', gap: 15, marginBottom: 20, flexWrap: 'wrap'}}>
+               <View style={[styles.searchBox, { flex: 1, minWidth: 250, marginBottom: 0 }]}>
+                 <Ionicons name="search" size={18} color="#888" style={{ marginRight: 10 }} />
+                 <TextInput 
+                   style={styles.searchInput} 
+                   placeholder="Search by email or username..." 
+                   placeholderTextColor="#666" 
+                   value={userSearchQuery} 
+                   onChangeText={setUserSearchQuery} 
+                 />
+               </View>
+               
+               <View style={{flexDirection: 'row', gap: 10}}>
+                 <Pressable style={[styles.filterPill, userTimeFilter === 'all' && styles.filterPillActive]} onPress={() => setUserTimeFilter('all')}>
+                    <Text style={[styles.filterPillText, userTimeFilter === 'all' && styles.filterPillTextActive]}>All Time</Text>
+                 </Pressable>
+                 <Pressable style={[styles.filterPill, userTimeFilter === '30days' && styles.filterPillActive]} onPress={() => setUserTimeFilter('30days')}>
+                    <Text style={[styles.filterPillText, userTimeFilter === '30days' && styles.filterPillTextActive]}>Last 30 Days</Text>
+                 </Pressable>
+                 <Pressable style={[styles.filterPill, userTimeFilter === '7days' && styles.filterPillActive]} onPress={() => setUserTimeFilter('7days')}>
+                    <Text style={[styles.filterPillText, userTimeFilter === '7days' && styles.filterPillTextActive]}>Last 7 Days</Text>
+                 </Pressable>
+               </View>
+             </View>
+
+             <View style={styles.leaderboardSection}>
+                {usersLoading ? <ActivityIndicator color="#e50914" /> : (
+                  usersList
+                    .filter(u => 
+                       (u.email && u.email.toLowerCase().includes(userSearchQuery.toLowerCase())) || 
+                       (u.username && u.username.toLowerCase().includes(userSearchQuery.toLowerCase()))
+                    )
+                    .map(user => {
+                       // Note: Fallback to 'active' if status column doesn't exist yet
+                       const userStatus = user.status || 'active'; 
+                       const isSuspended = userStatus === 'suspended';
+
+                       return (
+                        <View key={user.id} style={[styles.leaderboardRow, {flexDirection: 'column', alignItems: 'stretch'}]}>
+                           <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%'}}>
+                             <View style={{flexDirection: 'row', alignItems: 'center', gap: 15, flex: 1}}>
+                               <Image source={{ uri: `https://api.dicebear.com/7.x/avataaars/png?seed=${user.id}&backgroundColor=1f1f1f` }} style={{width: 40, height: 40, borderRadius: 20}} />
+                               <View style={{flex: 1}}>
+                                 <Text style={[styles.leaderboardTitle, {fontSize: 16}]} numberOfLines={1}>{user.username || 'No Username'}</Text>
+                                 <Text style={[styles.leaderboardCategory, {fontSize: 13, color: '#aaa'}]} numberOfLines={1}>{user.email}</Text>
+                                 <Text style={{fontSize: 11, color: '#666', marginTop: 4}}>Joined: {formatDate(user.created_at)}</Text>
+                               </View>
+                             </View>
+                             
+                             <View style={{alignItems: 'flex-end', gap: 5}}>
+                               {user.role === 'super_admin' ? (
+                                  <Text style={{color: '#eab308', fontWeight: 'bold', fontSize: 12}}>SUPER ADMIN</Text>
+                               ) : (
+                                  <View style={[styles.statusBadge, isSuspended ? {backgroundColor: '#450a0a', borderColor: '#ef4444'} : {backgroundColor: '#064e3b', borderColor: '#10b981'}]}>
+                                     <View style={{width: 6, height: 6, borderRadius: 3, backgroundColor: isSuspended ? '#ef4444' : '#10b981', marginRight: 6}} />
+                                     <Text style={{color: isSuspended ? '#ef4444' : '#10b981', fontSize: 11, fontWeight: 'bold'}}>{isSuspended ? 'SUSPENDED' : 'ACTIVE'}</Text>
+                                  </View>
+                               )}
+                             </View>
+                           </View>
+
+                           {/* Actions Row */}
+                           {user.role !== 'super_admin' && (
+                             <View style={{flexDirection: 'row', gap: 10, marginTop: 15, justifyContent: 'flex-end', borderTopWidth: 1, borderTopColor: '#222', paddingTop: 15}}>
+                               <Pressable 
+                                 style={[styles.manageButton, { backgroundColor: isSuspended ? '#16a34a' : '#b45309' }]} 
+                                 onPress={() => handleSuspendUser(user.id, userStatus)}
+                               >
+                                 {updatingId === user.id ? <ActivityIndicator size="small" color="#fff"/> : (
+                                   <Text style={styles.manageButtonText}>{isSuspended ? 'Reactivate User' : 'Suspend Account'}</Text>
+                                 )}
+                               </Pressable>
+                               
+                               <Pressable 
+                                 style={[styles.manageButton, { backgroundColor: '#b91c1c' }]} 
+                                 onPress={() => handleDeleteUserPermanently(user.id)}
+                               >
+                                 {deletingId === user.id ? <ActivityIndicator size="small" color="#fff"/> : (
+                                   <Text style={styles.manageButtonText}>Delete Permanently</Text>
+                                 )}
+                               </Pressable>
+                             </View>
+                           )}
+                        </View>
+                       );
+                    })
+                )}
+             </View>
+          </View>
         )}
 
         {/* --- UPLOAD SECTION --- */}
@@ -1080,4 +1274,11 @@ const styles = StyleSheet.create({
   featuredToggleContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15, backgroundColor: '#111', borderRadius: 10, marginBottom: 20, borderWidth: 1, borderColor: '#222' },
   featuredBadge: { backgroundColor: '#eab308', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginTop: 4, alignSelf: 'flex-start' },
   featuredBadgeText: { color: '#000', fontSize: 10, fontWeight: 'bold' },
+
+  // ---> NEW STYLES: User Management Hub <---
+  filterPill: { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 999, backgroundColor: '#111', borderWidth: 1, borderColor: '#333' },
+  filterPillActive: { backgroundColor: '#e50914', borderColor: '#e50914' },
+  filterPillText: { color: '#888', fontSize: 12, fontWeight: 'bold' },
+  filterPillTextActive: { color: '#fff' },
+  statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: 1 },
 });
