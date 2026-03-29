@@ -23,7 +23,7 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
   const [showControls, setShowControls] = useState(true);
   
   const [isMuted, setIsMuted] = useState(false);
-  const [volume, setVolume] = useState(1); // ---> NEW: Volume state <---
+  const [volume, setVolume] = useState(1);
   
   const [ccEnabled, setCcEnabled] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -75,7 +75,6 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
     }
   };
 
-  // ---> UPDATED: Bulletproof Fullscreen logic with iOS Safari Fallback <---
   const toggleFullscreen = () => {
     const video = videoRef.current as any;
     const container = containerRef.current as any;
@@ -86,7 +85,6 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
       } else if (container?.webkitRequestFullscreen) {
         container.webkitRequestFullscreen();
       } else if (video?.webkitEnterFullscreen) {
-        // Ultimate fallback for iPhones
         video.webkitEnterFullscreen();
       }
     } else {
@@ -105,15 +103,23 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
     }
   };
 
+  // ---> THE FIX: Aggressive CC toggle hitting both HLS.js and Native HTML5 <---
   const toggleCC = () => {
+    const newState = !ccEnabled;
+    setCcEnabled(newState);
+
+    // 1. Toggle HLS.js internal tracks (For Chrome/Firefox/Desktop)
     if (hlsRef.current) {
-      const current = hlsRef.current.subtitleTrack;
-      hlsRef.current.subtitleTrack = current === -1 ? 0 : -1;
-      setCcEnabled(hlsRef.current.subtitleTrack !== -1);
-    } else if (videoRef.current && videoRef.current.textTracks.length > 0) {
-      const track = videoRef.current.textTracks[0];
-      track.mode = track.mode === 'showing' ? 'hidden' : 'showing';
-      setCcEnabled(track.mode === 'showing');
+      // -1 disables subtitles, 0 enables the first subtitle track
+      hlsRef.current.subtitleTrack = newState ? 0 : -1;
+    } 
+    
+    // 2. Toggle Native HTML5 Text Tracks (For Safari/iOS and native m3u8 parsing)
+    if (videoRef.current && videoRef.current.textTracks) {
+      for (let i = 0; i < videoRef.current.textTracks.length; i++) {
+        // 'showing' forces the browser to render them on top of the video natively
+        videoRef.current.textTracks[i].mode = newState ? 'showing' : 'hidden';
+      }
     }
   };
 
@@ -177,7 +183,6 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
               <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                  <Pressable onPress={togglePlay}><Ionicons name={isPlaying ? "pause" : "play"} size={28} color="#fff" /></Pressable>
                  
-                 {/* ---> UPDATED: Volume icon WITH slider <--- */}
                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                      <Pressable onPress={() => { if(videoRef.current) { videoRef.current.muted = !isMuted; setIsMuted(!isMuted); } }}>
                         <Ionicons name={isMuted || volume === 0 ? "volume-mute" : "volume-high"} size={24} color="#fff" />
@@ -191,7 +196,6 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
 
                  <span style={{ color: '#fff', fontSize: '13px', fontWeight: 'bold' }}>{formatTime(time)} / {formatTime(duration)}</span>
                  
-                 {/* ---> UPDATED: Bulletproof CC Text Button <--- */}
                  <Pressable onPress={toggleCC} style={{ marginLeft: 5 }}>
                     <div style={{ border: `1.5px solid ${ccEnabled ? '#e50914' : '#fff'}`, borderRadius: '4px', padding: '1px 6px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                        <span style={{ color: ccEnabled ? '#e50914' : '#fff', fontSize: '12px', fontWeight: 'bold' }}>CC</span>
@@ -199,7 +203,6 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
                  </Pressable>
               </div>
 
-              {/* Exact Requested Layout: Minimize, Fullscreen, Back */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
                  <Pressable onPress={toggleMinimize}><Ionicons name="browsers-outline" size={22} color="#fff" /></Pressable>
                  <Pressable onPress={toggleFullscreen}><Ionicons name={isFullscreen ? "contract" : "expand"} size={24} color="#fff" /></Pressable>
