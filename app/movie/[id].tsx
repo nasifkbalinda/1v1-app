@@ -1,8 +1,15 @@
+import {
+  addDownloadedMovie,
+  isMovieDownloaded,
+  type DownloadedMovie,
+} from '@/lib/downloads';
+import { supabase } from '@/lib/supabase';
+import { Ionicons } from '@expo/vector-icons';
 import { useEvent } from 'expo';
-import { useVideoPlayer, VideoView } from 'expo-video';
-import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as FileSystem from 'expo-file-system/legacy';
-import { useEffect, useState, useCallback } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import { createElement, useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -15,13 +22,6 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '@/lib/supabase';
-import {
-  addDownloadedMovie,
-  isMovieDownloaded,
-  type DownloadedMovie,
-} from '@/lib/downloads';
 
 type Movie = {
   id: string;
@@ -41,31 +41,21 @@ type Episode = {
   video_url: string | null;
 };
 
-function VideoPlayerBlock({
-  url,
-  onError,
-}: {
-  url: string;
-  onError: () => void;
-}) {
+// ---> 1. NATIVE PLAYER (For iOS & Android apps - Supports Offline & PiP) <---
+function NativeVideoBlock({ url, onError, videoHeight }: { url: string, onError: () => void, videoHeight: number }) {
   const player = useVideoPlayer(url, (p) => {
     p.loop = false;
     p.play();
   });
 
-  const { error } = useEvent(player, 'statusChange', {
-    status: player.status,
-    error: null as unknown,
-  });
+  // FIX: Safely track the player status to prevent TypeScript event typing errors
+  const statusEvent = useEvent(player, 'statusChange', { status: player.status });
 
   useEffect(() => {
-    if (error) {
+    if (statusEvent.status === 'error') {
       onError();
     }
-  }, [error, onError]);
-
-  const { width } = Dimensions.get('window');
-  const videoHeight = width * (9 / 16);
+  }, [statusEvent.status, onError]);
 
   return (
     <VideoView
@@ -77,6 +67,42 @@ function VideoPlayerBlock({
       allowsPictureInPicture
     />
   );
+}
+
+// ---> 2. WEB PLAYER (For Desktop Browsers - Unlocks Subtitles & Quality Selectors) <---
+function WebVideoBlock({ videoId, videoHeight }: { videoId: string, videoHeight: number }) {
+  // Using createElement ensures TypeScript won't throw errors when building the mobile apps
+  return createElement('iframe', {
+    src: `https://iframe.mediadelivery.net/embed/633147/${videoId}?autoplay=true&preload=true`,
+    loading: "lazy",
+    style: { border: 'none', width: '100%', height: videoHeight },
+    allow: "accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;",
+    allowFullScreen: true
+  });
+}
+
+// ---> 3. THE SMART ROUTER <---
+function VideoPlayerBlock({
+  url,
+  onError,
+}: {
+  url: string;
+  onError: () => void;
+}) {
+  const { width } = Dimensions.get('window');
+  const videoHeight = width * (9 / 16);
+
+  let videoId = '';
+  if (url.includes('b-cdn.net')) {
+    const parts = url.split('/');
+    videoId = parts[parts.length - 2]; 
+  }
+
+  if (Platform.OS === 'web' && videoId) {
+    return <WebVideoBlock videoId={videoId} videoHeight={videoHeight} />;
+  }
+
+  return <NativeVideoBlock url={url} onError={onError} videoHeight={videoHeight} />;
 }
 
 export default function TheaterScreen() {
@@ -105,7 +131,6 @@ export default function TheaterScreen() {
   const [watchlistChecking, setWatchlistChecking] = useState(false);
   const [watchlistToggling, setWatchlistToggling] = useState(false);
 
-  // Offline mode: we have localUri and optional title/poster from params
   const isOfflineMode = Boolean(paramLocalUri);
 
   useEffect(() => {
@@ -166,7 +191,6 @@ export default function TheaterScreen() {
   }, [isOfflineMode, paramLocalUri, movie]);
 
   useEffect(() => {
-    // Reset failure state whenever the active video URL changes
     setVideoFailed(false);
   }, [currentVideoUrl]);
 
@@ -184,7 +208,7 @@ export default function TheaterScreen() {
         const { data, error: episodesError } = await supabase
           .from('episodes')
           .select('id, season_number, episode_number, title, video_url')
-          .eq('movie_id', movie.id)
+          .eq('movie_id', movie!.id) // FIX: Added non-null assertion !
           .order('season_number', { ascending: true })
           .order('episode_number', { ascending: true });
 
@@ -222,8 +246,8 @@ export default function TheaterScreen() {
         const { data, error: suggestionsError } = await supabase
           .from('movies')
           .select('id, title, description, poster_url, video_url, category, type')
-          .eq('category', movie.category)
-          .neq('id', movie.id)
+          .eq('category', movie!.category) // FIX: Added non-null assertion !
+          .neq('id', movie!.id) // FIX: Added non-null assertion !
           .limit(5);
 
         if (suggestionsError) throw suggestionsError;
@@ -249,7 +273,6 @@ export default function TheaterScreen() {
     };
   }, [movie, isOfflineMode]);
 
-  // Check if current movie is on the user's watchlist
   useEffect(() => {
     if (!movie || isOfflineMode) {
       setIsInMyList(false);
@@ -279,7 +302,7 @@ export default function TheaterScreen() {
           .from('watchlist')
           .select('id')
           .eq('user_id', user.id)
-          .eq('movie_id', movie.id)
+          .eq('movie_id', movie!.id) // FIX: Added non-null assertion !
           .maybeSingle();
         if (error) {
           console.log('[Watchlist] Check error:', error.message);
@@ -302,7 +325,7 @@ export default function TheaterScreen() {
     return () => {
       isCancelled = true;
     };
-  }, [movie?.id, isOfflineMode]);
+  }, [movie, isOfflineMode]);
 
   const handleWatchlistToggle = useCallback(async () => {
     if (!movie || isOfflineMode || watchlistToggling) return;
@@ -463,7 +486,6 @@ export default function TheaterScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Fixed header: back button only — keeps video and its native controls strictly below */}
       <View style={[styles.headerRow, { paddingTop: insets.top + 8, minHeight: headerHeight }]}>
         <Pressable
           style={styles.backButton}
