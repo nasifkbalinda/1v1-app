@@ -153,13 +153,25 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
         ref={videoRef} 
         autoPlay 
         playsInline 
+        crossOrigin="anonymous" /* <--- CRITICAL: Allows browser to read external subtitles */
         style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         onTimeUpdate={() => { setTime(videoRef.current?.currentTime || 0); onTimeUpdate(videoRef.current?.currentTime || 0); }}
         onDurationChange={() => setDuration(videoRef.current?.duration || 0)}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onClick={togglePlay}
-      />
+      >
+        {/* CRITICAL: Explicitly fetch Bunny's sidecar subtitle file */}
+        {url && url.includes('playlist.m3u8') && (
+          <track 
+            kind="subtitles" 
+            srcLang="en" 
+            label="English" 
+            src={url.replace('playlist.m3u8', 'captions/en.vtt')} 
+            default={false} 
+          />
+        )}
+      </video>
 
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none', transition: 'opacity 0.3s', opacity: showControls ? 1 : 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
         
