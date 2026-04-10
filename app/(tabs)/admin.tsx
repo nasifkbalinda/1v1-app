@@ -444,6 +444,16 @@ export default function AdminScreen() {
       const upload = new tus.Upload(fileToUpload, {
         endpoint: "https://video.bunnycdn.com/tusupload",
         retryDelays: [0, 3000, 5000, 10000, 20000],
+        
+        // ---> FIX 1: Force 5MB chunks so the upload is lightning fast and stable over weak internet
+        chunkSize: 5 * 1024 * 1024, 
+        removeFingerprintOnSuccess: true, 
+        
+        // ---> FIX 2: Override the fingerprint to completely stop the red HEAD error when replacing episodes
+        fingerprint: function(file, options) {
+            return Promise.resolve(bunnyData.videoId); 
+        },
+
         headers: {
           AuthorizationSignature: bunnyData.signature,
           AuthorizationExpire: String(bunnyData.expirationTime),
