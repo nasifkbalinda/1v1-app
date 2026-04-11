@@ -14,6 +14,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 type Movie = { id: string; title: string; description: string | null; poster_url: string | null; backdrop_url?: string | null; video_url: string | null; category: string | null; type: string | null; };
 type Episode = { id: string; season_number: number; episode_number: number; title: string; video_url: string | null; };
 
+// ---> CRITICAL FIX: Security Header for Bunny CDN <---
+const BUNNY_HEADERS = { 'Referer': 'https://1v1-app.pages.dev/' };
+
 function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: string; initialTime: number; onTimeUpdate: (time: number) => void; title: string; onBack: () => void; }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -37,6 +40,23 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
     clearTimeout(controlsTimeoutRef.current);
     controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3500);
   };
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const hideTracksOnLoad = () => {
+      if (video.textTracks && !ccEnabled) {
+        for (let i = 0; i < video.textTracks.length; i++) {
+          video.textTracks[i].mode = 'hidden';
+        }
+      }
+    };
+
+    hideTracksOnLoad();
+    video.addEventListener('loadedmetadata', hideTracksOnLoad);
+    return () => video.removeEventListener('loadedmetadata', hideTracksOnLoad);
+  }, [url, ccEnabled]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -153,7 +173,7 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
         ref={videoRef} 
         autoPlay 
         playsInline 
-        crossOrigin="anonymous" /* <--- CRITICAL: Allows browser to read external subtitles */
+        crossOrigin="anonymous" 
         style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         onTimeUpdate={() => { setTime(videoRef.current?.currentTime || 0); onTimeUpdate(videoRef.current?.currentTime || 0); }}
         onDurationChange={() => setDuration(videoRef.current?.duration || 0)}
@@ -161,26 +181,23 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
         onPause={() => setIsPlaying(false)}
         onClick={togglePlay}
       >
-        {/* CRITICAL: Explicitly fetch Bunny's sidecar subtitle file */}
         {url && url.includes('playlist.m3u8') && (
           <track 
             kind="subtitles" 
             srcLang="en" 
             label="English" 
             src={url.replace('playlist.m3u8', 'captions/en.vtt')} 
-            default={false} 
+            default={true} /* ---> CRITICAL: Set to true for Mobile Safari/WebView visibility <--- */
           />
         )}
       </video>
 
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none', transition: 'opacity 0.3s', opacity: showControls ? 1 : 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
         
-        {/* Top Gradient Bar */}
         <div style={{ padding: '20px', display: 'flex', alignItems: 'center', pointerEvents: 'auto', background: 'linear-gradient(to bottom, rgba(0,0,0,0.8), transparent)' }}>
            <span style={{ color: '#fff', fontSize: '18px', fontWeight: 'bold', textShadow: '1px 1px 3px #000' }}>{title}</span>
         </div>
 
-        {/* Bottom Custom Control Bar */}
         <div style={{ padding: '20px', pointerEvents: 'auto', background: 'linear-gradient(to top, rgba(0,0,0,0.8), transparent)' }}>
            <input 
               type="range" min="0" max={duration || 0} value={time} 
@@ -226,7 +243,11 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
 
 function VideoPlayerBlock({ url, onError, initialTime, movieId, userId, title, onBack }: { url: string; onError: (msg: string) => void; initialTime: number; movieId: string; userId: string | null; title: string; onBack: () => void; }) {
   const isWeb = Platform.OS === 'web';
-  const player = !isWeb ? useVideoPlayer(url, (p) => { p.play(); }) : null;
+
+  // ---> CRITICAL FIX: Inject Referer headers to bypass Bunny CDN 403 in the Native Player <---
+  const playerSource = url ? { uri: url, headers: BUNNY_HEADERS } : null;
+  const player = !isWeb && playerSource ? useVideoPlayer(playerSource, (p) => { p.play(); }) : null;
+
   const hasCountedView = useRef(false);
 
   useEffect(() => {
@@ -283,7 +304,6 @@ export default function TheaterScreen() {
   const [activeEpisode, setActiveEpisode] = useState<Episode | null>(null);
   const [expandedSeason, setExpandedSeason] = useState<number | null>(null);
 
-  // ---> UPDATED: State for offline management <---
   const [isDownloaded, setIsDownloaded] = useState(false);
   const [downloadedEpisodes, setDownloadedEpisodes] = useState<{ [key: string]: boolean }>({});
   
@@ -316,7 +336,6 @@ export default function TheaterScreen() {
              setExpandedSeason(epData[0].season_number);
           }
           
-          // Check download status for all episodes
           const epStatusObj: { [key: string]: boolean } = {};
           for (const ep of (epData || [])) {
              epStatusObj[ep.id] = await isMovieDownloaded(ep.id);
@@ -341,7 +360,6 @@ export default function TheaterScreen() {
     fetchData();
   }, [id]);
 
-  // ---> NEW: AppState Listener to save resumable downloads on background <---
   useEffect(() => {
     const subscription = AppState.addEventListener('change', async (nextState: AppStateStatus) => {
       if (nextState === 'background' && activeDownloadRef.current && downloadingId) {
@@ -378,7 +396,6 @@ export default function TheaterScreen() {
     } catch (e) { console.error(e); }
   };
 
-  // ---> NEW: Robust Delete Local File Handler <---
   const handleDeleteLocalItem = (targetId: string, title: string) => {
     const localUri = getLocalFilePath(targetId);
     const msg = `Remove "${title}" from your device? You can download it again anytime.`;
@@ -406,7 +423,6 @@ export default function TheaterScreen() {
     }
   };
 
-  // ---> NEW: Robust Resumable Download Handler <---
   const handleDownloadItem = async (videoUrl: string | null, targetId: string, title: string, posterUrl: string | null) => {
     if (!ensureAuthenticated()) return;
     if (!videoUrl) return;
@@ -445,11 +461,15 @@ export default function TheaterScreen() {
       let downloadResumable: FileSystem.DownloadResumable;
       const savedSnapshot = await AsyncStorage.getItem(RESUMABLE_SNAPSHOT_KEY(targetId));
 
+      // ---> CRITICAL FIX: Inject Referer headers to bypass Bunny CDN 403 in the Downloader <---
       if (savedSnapshot) {
         const snapshot = JSON.parse(savedSnapshot) as FileSystem.DownloadPauseState;
+        if (!snapshot.options) snapshot.options = {};
+        if (!snapshot.options.headers) snapshot.options.headers = {};
+        snapshot.options.headers = { ...snapshot.options.headers, ...BUNNY_HEADERS };
         downloadResumable = FileSystem.createDownloadResumable(snapshot.url, snapshot.fileUri, snapshot.options, onProgress, snapshot.resumeData);
       } else {
-        downloadResumable = FileSystem.createDownloadResumable(mp4Url, localUri, {}, onProgress);
+        downloadResumable = FileSystem.createDownloadResumable(mp4Url, localUri, { headers: BUNNY_HEADERS }, onProgress);
       }
 
       activeDownloadRef.current = downloadResumable;
