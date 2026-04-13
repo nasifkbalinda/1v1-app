@@ -1,10 +1,9 @@
 import { supabase } from '@/lib/supabase';
-import { Ionicons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Platform, View } from 'react-native'; // ---> Added Platform here <---
+import { ActivityIndicator, View } from 'react-native';
 
 // Keep the splash screen visible while everything loads
 SplashScreen.preventAutoHideAsync();
@@ -13,18 +12,12 @@ export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
   
-  // 1. FONT LOADING LOGIC (The Ultimate Web/Android Split)
-  const fontsToLoad: any = {
-    ...Ionicons.font,
-  };
-
-  // Only on the web, fetch the font directly from the public folder's URL.
-  // Because it is a string URL, the Android compiler ignores it and doesn't crash!
-  if (Platform.OS === 'web') {
-    fontsToLoad['Ionicons'] = '/fonts/Ionicons.ttf';
-  }
-
-  const [fontsLoaded, fontError] = useFonts(fontsToLoad);
+  // 1. FONT LOADING LOGIC (The Bulletproof Fix)
+  // This extracts the font straight from node_modules. 
+  // It works flawlessly on both Web and Android without a public folder!
+  const [fontsLoaded, fontError] = useFonts({
+    Ionicons: require('@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf'),
+  });
 
   // 2. AUTH SESSION LOGIC
   const [authLoading, setAuthLoading] = useState(true);
@@ -58,7 +51,8 @@ export default function RootLayout() {
 
   // 3. NAVIGATION GUARD
   useEffect(() => {
-    if (authLoading || !fontsLoaded) return;
+    // If auth is loading, or fonts haven't loaded (and haven't explicitly errored), wait.
+    if (authLoading || (!fontsLoaded && !fontError)) return;
 
     // Check if the current screen is inside (tabs) or the movie player
     const inAuthGroup = segments[0] === '(tabs)' || segments[0] === 'movie';
@@ -73,10 +67,10 @@ export default function RootLayout() {
     
     // Hide splash screen once fonts AND auth are ready
     SplashScreen.hideAsync();
-  }, [session, authLoading, fontsLoaded, segments]);
+  }, [session, authLoading, fontsLoaded, fontError, segments]);
 
   // 4. LOADING SCREEN (Wait for Fonts + Auth)
-  if (!fontsLoaded && !fontError || authLoading) {
+  if ((!fontsLoaded && !fontError) || authLoading) {
     return (
       <View style={{ flex: 1, backgroundColor: '#0a0a0a', justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator color="#e50914" size="large" />
