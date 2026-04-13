@@ -1,35 +1,31 @@
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
-import IoniconsTTF from '@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf';
+import '@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf'; // ✅ critical
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
-// Keep the splash screen visible while everything loads
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
   
-  // ✅ BULLETPROOF FONT LOADING (Web + Android safe)
+  // ✅ Correct font loading
   const [fontsLoaded, fontError] = useFonts({
-    ...Ionicons.font,        // ensures correct font family mapping
-    Ionicons: IoniconsTTF,   // forces bundler to include the font (fixes web)
+    ...Ionicons.font,
   });
 
-  // 2. AUTH SESSION LOGIC
   const [authLoading, setAuthLoading] = useState(true);
   const [session, setSession] = useState<any>(null);
 
   useEffect(() => {
-    // Check session on app start
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setAuthLoading(false);
-      
+
       if (session?.user) {
         supabase
           .from('profiles')
@@ -39,11 +35,10 @@ export default function RootLayout() {
       }
     });
 
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setAuthLoading(false);
-      
+
       if (session?.user) {
         supabase
           .from('profiles')
@@ -56,7 +51,6 @@ export default function RootLayout() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 3. NAVIGATION GUARD
   useEffect(() => {
     if (authLoading || (!fontsLoaded && !fontError)) return;
 
@@ -71,7 +65,6 @@ export default function RootLayout() {
     SplashScreen.hideAsync();
   }, [session, authLoading, fontsLoaded, fontError, segments]);
 
-  // 4. LOADING SCREEN
   if ((!fontsLoaded && !fontError) || authLoading) {
     return (
       <View style={{ flex: 1, backgroundColor: '#0a0a0a', justifyContent: 'center', alignItems: 'center' }}>
