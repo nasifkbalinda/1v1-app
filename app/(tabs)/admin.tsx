@@ -405,7 +405,6 @@ export default function AdminScreen() {
     return supabase.storage.from('movies').getPublicUrl(data.path).data.publicUrl;
   };
 
-  // ---> FIX APPLIED: Chunking & Unique Fingerprints to prevent HEAD errors <---
   const uploadVideoToBunny = async (fileObj: any, taskId: string, dbTable: string, dbId: string, subUrl: string | null = null): Promise<void> => {
     let fileToUpload = fileObj.file;
     
@@ -446,11 +445,11 @@ export default function AdminScreen() {
         endpoint: "https://video.bunnycdn.com/tusupload",
         retryDelays: [0, 3000, 5000, 10000, 20000],
         
-        // 1. Force 5MB chunks so the upload is lightning fast and stable over weak internet
+        // ---> FIX 1: Force 5MB chunks so the upload is lightning fast and stable over weak internet
         chunkSize: 5 * 1024 * 1024, 
         removeFingerprintOnSuccess: true, 
         
-        // 2. Override the fingerprint to completely stop the red HEAD error when replacing episodes
+        // ---> FIX 2: Override the fingerprint to completely stop the red HEAD error when replacing episodes
         fingerprint: function(file, options) {
             return Promise.resolve(bunnyData.videoId); 
         },
@@ -891,6 +890,7 @@ export default function AdminScreen() {
 
                 <Pressable style={[styles.selectButton, { borderColor: videoFile ? '#22c55e' : '#2a2a2a', marginBottom: 15 }]} onPress={() => pickVideo(false)}><Ionicons name="videocam" size={20} color={videoFile ? '#22c55e' : '#fff'} /><Text style={styles.selectButtonText}>{videoFile ? videoFile.name : 'Video File *'}</Text></Pressable>
                 
+                {/* RESTORED: Movie Subtitle Button */}
                 <Pressable style={[styles.selectButton, { borderColor: subtitleFile ? '#22c55e' : '#2a2a2a', marginBottom: 15 }]} onPress={() => pickSubtitle(false)}>
                   <Ionicons name="text" size={20} color={subtitleFile ? '#22c55e' : '#fff'} />
                   <Text style={styles.selectButtonText}>{subtitleFile ? subtitleFile.name : 'Optional: Attach Subtitles (.vtt / .srt)'}</Text>
@@ -941,6 +941,7 @@ export default function AdminScreen() {
                 
                 <Pressable style={[styles.selectButton, { borderColor: episodeVideoFile ? '#22c55e' : '#2a2a2a', marginBottom: 15 }]} onPress={() => pickVideo(true)}><Ionicons name="videocam" size={20} color={episodeVideoFile ? '#22c55e' : '#fff'} /><Text style={styles.selectButtonText} numberOfLines={1}>{episodeVideoFile ? episodeVideoFile.name : 'Video *'}</Text></Pressable>
                 
+                {/* RESTORED: Episode Subtitle Button */}
                 <Pressable style={[styles.selectButton, { borderColor: episodeSubtitleFile ? '#22c55e' : '#2a2a2a', marginBottom: 15 }]} onPress={() => pickSubtitle(true)}>
                   <Ionicons name="text" size={20} color={episodeSubtitleFile ? '#22c55e' : '#fff'} />
                   <Text style={styles.selectButtonText}>{episodeSubtitleFile ? episodeSubtitleFile.name : 'Optional: Attach Subtitles (.vtt / .srt)'}</Text>
@@ -1034,6 +1035,7 @@ export default function AdminScreen() {
                             <Text style={styles.selectButtonText}>{editVideoFile ? `Queued: ${editVideoFile.name}` : 'Upload Replacement Video'}</Text>
                          </Pressable>
                          
+                         {/* RESTORED: Edit Subtitle Button */}
                          <Pressable style={[styles.selectButton, { borderColor: editSubtitleFile ? '#22c55e' : '#333', backgroundColor: '#181818', marginTop: 10 }]} onPress={pickEditSubtitle}>
                             <Ionicons name="text" size={20} color={editSubtitleFile ? '#22c55e' : '#888'} />
                             <Text style={styles.selectButtonText}>{editSubtitleFile ? `Queued: ${editSubtitleFile.name}` : 'Attach Subtitles (.vtt / .srt)'}</Text>
@@ -1080,6 +1082,7 @@ export default function AdminScreen() {
                                       <Text style={[styles.selectButtonText, {fontSize: 12}]} numberOfLines={1}>{ep.newVideoFile ? ep.newVideoFile.name : 'Replace Video'}</Text>
                                    </Pressable>
                                    
+                                   {/* RESTORED: Edit Episode Subtitle Button */}
                                    <Pressable style={[styles.selectButtonSmall, { flex: 1, borderColor: ep.newSubtitleFile ? '#22c55e' : '#333' }]} onPress={() => pickEpisodeEditSubtitle(ep.id)}>
                                       <Ionicons name="text" size={16} color={ep.newSubtitleFile ? '#22c55e' : '#888'} />
                                       <Text style={[styles.selectButtonText, {fontSize: 12}]} numberOfLines={1}>{ep.newSubtitleFile ? ep.newSubtitleFile.name : '+ Subtitles'}</Text>

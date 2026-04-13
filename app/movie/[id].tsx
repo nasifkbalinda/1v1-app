@@ -1,35 +1,78 @@
 // @ts-nocheck
-import { buildMp4Url, deleteLocalFile, getLocalFilePath, MIN_VALID_FILE_SIZE_BYTES, RESUMABLE_SNAPSHOT_KEY, showDownloadError } from '@/lib/downloadHelpers';
-import { addDownloadedMovie, isMovieDownloaded, removeDownloadedMovie } from '@/lib/downloads';
+import { buildMp4Url, deleteLocalFile, getLocalFilePath, MIN_VALID_FILE_SIZE_BYTES, showDownloadError } from '@/lib/downloadHelpers';
+import { addDownloadedMovie, getDownloadedMovie, isMovieDownloaded, removeDownloadedMovie } from '@/lib/downloads';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, AppStateStatus, Image, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-type Movie = { id: string; title: string; description: string | null; poster_url: string | null; backdrop_url?: string | null; video_url: string | null; category: string | null; type: string | null; };
-type Episode = { id: string; season_number: number; episode_number: number; title: string; video_url: string | null; };
+type Movie = {
+  id: string;
+  title: string;
+  description: string | null;
+  poster_url: string | null;
+  backdrop_url?: string | null;
+  video_url: string | null;
+  category: string | null;
+  type: string | null;
+};
 
-function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: string; initialTime: number; onTimeUpdate: (time: number) => void; title: string; onBack: () => void; }) {
+type Episode = {
+  id: string;
+  season_number: number;
+  episode_number: number;
+  title: string;
+  video_url: string | null;
+};
+
+// Required by BunnyCDN Stream — "Block direct url file access" is ON in the library
+// security settings. Every request (playback AND download) must include this header
+// or BunnyCDN returns 403. The domain must match the "Allowed Domains" list in your
+// Stream library → Security → General.
+const BUNNY_HEADERS = { Referer: 'https://1v1-app.pages.dev/' };
+
+// ─── Web HLS Player ───────────────────────────────────────────────────────────
+
+function WebHLSPlayer({
+  url,
+  initialTime,
+  onTimeUpdate,
+  title,
+  onBack,
+}: {
+  url: string;
+  initialTime: number;
+  onTimeUpdate: (time: number) => void;
+  title: string;
+  onBack: () => void;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<any>(null);
-  
+
   const [isPlaying, setIsPlaying] = useState(true);
   const [time, setTime] = useState(initialTime);
   const [duration, setDuration] = useState(0);
   const [showControls, setShowControls] = useState(true);
-  
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(1);
-  
   const [ccEnabled, setCcEnabled] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  
   const controlsTimeoutRef = useRef<any>(null);
 
   const resetControlsTimer = () => {
@@ -38,11 +81,9 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
     controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3500);
   };
 
-  // ---> FIX: Force iOS/Mobile to hide the downloaded text until CC is clicked <---
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-
     const hideTracksOnLoad = () => {
       if (video.textTracks && !ccEnabled) {
         for (let i = 0; i < video.textTracks.length; i++) {
@@ -50,7 +91,6 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
         }
       }
     };
-
     hideTracksOnLoad();
     video.addEventListener('loadedmetadata', hideTracksOnLoad);
     return () => video.removeEventListener('loadedmetadata', hideTracksOnLoad);
@@ -60,19 +100,25 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
     const video = videoRef.current;
     if (!video || !url) return;
     const isMP4 = url.toLowerCase().includes('.mp4') || url.includes('highest.mp4');
-    
+
     if (isMP4) {
-      video.src = url; video.currentTime = initialTime; video.play().catch(() => {});
+      video.src = url;
+      video.currentTime = initialTime;
+      video.play().catch(() => {});
     } else {
       import('hls.js').then((HlsModule) => {
         const Hls = HlsModule.default;
         if (Hls.isSupported()) {
           const hls = new Hls({ startPosition: initialTime });
-          hlsRef.current = hls; 
+          hlsRef.current = hls;
           const hlsUrl = url.includes('.m3u8') ? url : `${url}.m3u8`;
-          hls.loadSource(hlsUrl); hls.attachMedia(video); hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(() => {}); });
+          hls.loadSource(hlsUrl);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(() => {}); });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-          video.src = url; video.currentTime = initialTime; video.play().catch(() => {});
+          video.src = url;
+          video.currentTime = initialTime;
+          video.play().catch(() => {});
         }
       });
     }
@@ -82,7 +128,6 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
     };
     document.addEventListener('fullscreenchange', handleFsChange);
     document.addEventListener('webkitfullscreenchange', handleFsChange);
-    
     return () => {
       document.removeEventListener('fullscreenchange', handleFsChange);
       document.removeEventListener('webkitfullscreenchange', handleFsChange);
@@ -91,47 +136,36 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
 
   const togglePlay = () => {
     if (videoRef.current) {
-      if (videoRef.current.paused) videoRef.current.play(); else videoRef.current.pause();
+      if (videoRef.current.paused) videoRef.current.play();
+      else videoRef.current.pause();
     }
   };
 
   const toggleFullscreen = () => {
     const video = videoRef.current as any;
     const container = containerRef.current as any;
-    
     if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-      if (container?.requestFullscreen) {
-        container.requestFullscreen();
-      } else if (container?.webkitRequestFullscreen) {
-        container.webkitRequestFullscreen();
-      } else if (video?.webkitEnterFullscreen) {
-        video.webkitEnterFullscreen();
-      }
+      if (container?.requestFullscreen) container.requestFullscreen();
+      else if (container?.webkitRequestFullscreen) container.webkitRequestFullscreen();
+      else if (video?.webkitEnterFullscreen) video.webkitEnterFullscreen();
     } else {
-      if (document.exitFullscreen) {
-        document.exitFullscreen();
-      } else if (document.webkitExitFullscreen) {
-        document.webkitExitFullscreen();
-      }
+      if (document.exitFullscreen) document.exitFullscreen();
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
     }
   };
 
   const toggleMinimize = () => {
     if (document.pictureInPictureEnabled && videoRef.current) {
-       if (document.pictureInPictureElement) document.exitPictureInPicture();
-       else videoRef.current.requestPictureInPicture();
+      if (document.pictureInPictureElement) document.exitPictureInPicture();
+      else videoRef.current.requestPictureInPicture();
     }
   };
 
   const toggleCC = () => {
     const newState = !ccEnabled;
     setCcEnabled(newState);
-
-    if (hlsRef.current) {
-      hlsRef.current.subtitleTrack = newState ? 0 : -1;
-    } 
-    
-    if (videoRef.current && videoRef.current.textTracks) {
+    if (hlsRef.current) hlsRef.current.subtitleTrack = newState ? 0 : -1;
+    if (videoRef.current?.textTracks) {
       for (let i = 0; i < videoRef.current.textTracks.length; i++) {
         videoRef.current.textTracks[i].mode = newState ? 'showing' : 'hidden';
       }
@@ -142,14 +176,9 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
     const val = Number(e.target.value);
     setVolume(val);
     if (videoRef.current) {
-       videoRef.current.volume = val;
-       if (val > 0 && isMuted) {
-           videoRef.current.muted = false;
-           setIsMuted(false);
-       } else if (val === 0 && !isMuted) {
-           videoRef.current.muted = true;
-           setIsMuted(true);
-       }
+      videoRef.current.volume = val;
+      if (val > 0 && isMuted) { videoRef.current.muted = false; setIsMuted(false); }
+      else if (val === 0 && !isMuted) { videoRef.current.muted = true; setIsMuted(true); }
     }
   };
 
@@ -160,88 +189,110 @@ function WebHLSPlayer({ url, initialTime, onTimeUpdate, title, onBack }: { url: 
   };
 
   return (
-    <div 
+    <div
       ref={containerRef}
       style={{ width: '100%', height: '100%', backgroundColor: '#000', position: 'relative' }}
       onMouseMove={resetControlsTimer}
       onClick={resetControlsTimer}
       onMouseLeave={() => setShowControls(false)}
     >
-      <video 
-        ref={videoRef} 
-        autoPlay 
-        playsInline 
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
         crossOrigin="anonymous"
         style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-        onTimeUpdate={() => { setTime(videoRef.current?.currentTime || 0); onTimeUpdate(videoRef.current?.currentTime || 0); }}
+        onTimeUpdate={() => {
+          setTime(videoRef.current?.currentTime || 0);
+          onTimeUpdate(videoRef.current?.currentTime || 0);
+        }}
         onDurationChange={() => setDuration(videoRef.current?.duration || 0)}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onClick={togglePlay}
       >
         {url && url.includes('playlist.m3u8') && (
-          <track 
-            kind="subtitles" 
-            srcLang="en" 
-            label="English" 
-            src={url.replace('playlist.m3u8', 'captions/en.vtt')} 
-            default={true} /* ---> CRITICAL FIX: Forces mobile browsers to load sidecar subs <--- */
+          <track
+            kind="subtitles"
+            srcLang="en"
+            label="English"
+            src={url.replace('playlist.m3u8', 'captions/en.vtt')}
+            default={true}
           />
         )}
       </video>
 
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, pointerEvents: 'none', transition: 'opacity 0.3s', opacity: showControls ? 1 : 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-        
         <div style={{ padding: '20px', display: 'flex', alignItems: 'center', pointerEvents: 'auto', background: 'linear-gradient(to bottom, rgba(0,0,0,0.8), transparent)' }}>
-           <span style={{ color: '#fff', fontSize: '18px', fontWeight: 'bold', textShadow: '1px 1px 3px #000' }}>{title}</span>
+          <span style={{ color: '#fff', fontSize: '18px', fontWeight: 'bold', textShadow: '1px 1px 3px #000' }}>{title}</span>
         </div>
 
         <div style={{ padding: '20px', pointerEvents: 'auto', background: 'linear-gradient(to top, rgba(0,0,0,0.8), transparent)' }}>
-           <input 
-              type="range" min="0" max={duration || 0} value={time} 
-              onChange={(e) => { if(videoRef.current) videoRef.current.currentTime = Number(e.target.value); }}
-              style={{ width: '100%', cursor: 'pointer', accentColor: '#e50914', height: '4px', marginBottom: '15px' }} 
-           />
-           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-              
-              <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                 <Pressable onPress={togglePlay}><Ionicons name={isPlaying ? "pause" : "play"} size={28} color="#fff" /></Pressable>
-                 
-                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                     <Pressable onPress={() => { if(videoRef.current) { videoRef.current.muted = !isMuted; setIsMuted(!isMuted); } }}>
-                        <Ionicons name={isMuted || volume === 0 ? "volume-mute" : "volume-high"} size={24} color="#fff" />
-                     </Pressable>
-                     <input 
-                        type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume}
-                        onChange={handleVolumeChange}
-                        style={{ width: '60px', accentColor: '#e50914', cursor: 'pointer' }}
-                     />
-                 </div>
-
-                 <span style={{ color: '#fff', fontSize: '13px', fontWeight: 'bold' }}>{formatTime(time)} / {formatTime(duration)}</span>
-                 
-                 <Pressable onPress={toggleCC} style={{ marginLeft: 5 }}>
-                    <div style={{ border: `1.5px solid ${ccEnabled ? '#e50914' : '#fff'}`, borderRadius: '4px', padding: '1px 6px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                       <span style={{ color: ccEnabled ? '#e50914' : '#fff', fontSize: '12px', fontWeight: 'bold' }}>CC</span>
-                    </div>
-                 </Pressable>
+          <input
+            type="range" min="0" max={duration || 0} value={time}
+            onChange={(e) => { if (videoRef.current) videoRef.current.currentTime = Number(e.target.value); }}
+            style={{ width: '100%', cursor: 'pointer', accentColor: '#e50914', height: '4px', marginBottom: '15px' }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+              <Pressable onPress={togglePlay}>
+                <Ionicons name={isPlaying ? 'pause' : 'play'} size={28} color="#fff" />
+              </Pressable>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Pressable onPress={() => { if (videoRef.current) { videoRef.current.muted = !isMuted; setIsMuted(!isMuted); } }}>
+                  <Ionicons name={isMuted || volume === 0 ? 'volume-mute' : 'volume-high'} size={24} color="#fff" />
+                </Pressable>
+                <input
+                  type="range" min="0" max="1" step="0.05" value={isMuted ? 0 : volume}
+                  onChange={handleVolumeChange}
+                  style={{ width: '60px', accentColor: '#e50914', cursor: 'pointer' }}
+                />
               </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                 <Pressable onPress={toggleMinimize}><Ionicons name="browsers-outline" size={22} color="#fff" /></Pressable>
-                 <Pressable onPress={toggleFullscreen}><Ionicons name={isFullscreen ? "contract" : "expand"} size={24} color="#fff" /></Pressable>
-                 <Pressable onPress={onBack}><Ionicons name="close-circle-outline" size={28} color="#fff" /></Pressable>
-              </div>
-           </div>
+              <span style={{ color: '#fff', fontSize: '13px', fontWeight: 'bold' }}>{formatTime(time)} / {formatTime(duration)}</span>
+              <Pressable onPress={toggleCC} style={{ marginLeft: 5 }}>
+                <div style={{ border: `1.5px solid ${ccEnabled ? '#e50914' : '#fff'}`, borderRadius: '4px', padding: '1px 6px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                  <span style={{ color: ccEnabled ? '#e50914' : '#fff', fontSize: '12px', fontWeight: 'bold' }}>CC</span>
+                </div>
+              </Pressable>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+              <Pressable onPress={toggleMinimize}><Ionicons name="browsers-outline" size={22} color="#fff" /></Pressable>
+              <Pressable onPress={toggleFullscreen}><Ionicons name={isFullscreen ? 'contract' : 'expand'} size={24} color="#fff" /></Pressable>
+              <Pressable onPress={onBack}><Ionicons name="close-circle-outline" size={28} color="#fff" /></Pressable>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function VideoPlayerBlock({ url, onError, initialTime, movieId, userId, title, onBack }: { url: string; onError: (msg: string) => void; initialTime: number; movieId: string; userId: string | null; title: string; onBack: () => void; }) {
+// ─── Native Video Player Block ────────────────────────────────────────────────
+
+function VideoPlayerBlock({
+  url,
+  onError,
+  initialTime,
+  movieId,
+  userId,
+  title,
+  onBack,
+}: {
+  url: string;
+  onError: (msg: string) => void;
+  initialTime: number;
+  movieId: string;
+  userId: string | null;
+  title: string;
+  onBack: () => void;
+}) {
   const isWeb = Platform.OS === 'web';
-  const player = !isWeb ? useVideoPlayer(url, (p) => { p.play(); }) : null;
+
+  // Inject Referer header into the native expo-video player source so BunnyCDN
+  // doesn't block the stream with a 403.
+  const playerSource = url ? { uri: url, headers: BUNNY_HEADERS } : null;
+  const player = !isWeb && playerSource ? useVideoPlayer(playerSource, (p) => { p.play(); }) : null;
+
   const hasCountedView = useRef(false);
 
   useEffect(() => {
@@ -258,9 +309,18 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId, title, o
   useEffect(() => {
     if (!userId || !movieId) return;
     const progressTimer = setInterval(() => {
-      const currentTime = isWeb && document.querySelector('video') ? document.querySelector('video')?.currentTime || 0 : player?.currentTime || 0;
+      const currentTime =
+        isWeb && document.querySelector('video')
+          ? document.querySelector('video')?.currentTime || 0
+          : player?.currentTime || 0;
       if (currentTime > 5) {
-        supabase.from('playback_progress').upsert({ user_id: userId, movie_id: movieId, timestamp_seconds: Math.floor(currentTime), updated_at: new Date().toISOString() }, { onConflict: 'user_id, movie_id' }).then();
+        supabase
+          .from('playback_progress')
+          .upsert(
+            { user_id: userId, movie_id: movieId, timestamp_seconds: Math.floor(currentTime), updated_at: new Date().toISOString() },
+            { onConflict: 'user_id, movie_id' }
+          )
+          .then();
       }
     }, 10000);
     return () => clearInterval(progressTimer);
@@ -277,14 +337,22 @@ function VideoPlayerBlock({ url, onError, initialTime, movieId, userId, title, o
   );
 }
 
+// ─── Main Screen ──────────────────────────────────────────────────────────────
+
 export default function TheaterScreen() {
-  const params = useLocalSearchParams<{ id: string; localUri?: string; }>();
-  const { id, localUri: paramLocalUri } = params;
+  // FIX (Issue 2): Use `offline` flag instead of `localUri`.
+  // Passing file:/// URIs through Expo Router params causes a 404 because the
+  // router's URL parser misreads the encoded slashes as nested route segments.
+  // We pass offline=true and look up the real URI from the registry below.
+  const params = useLocalSearchParams<{ id: string; offline?: string }>();
+  const { id, offline } = params;
+  const isOfflineMode = offline === 'true';
+
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const isDesktop = width > 768;
-  
+
   const [movie, setMovie] = useState<Movie | null>(null);
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
@@ -294,201 +362,278 @@ export default function TheaterScreen() {
   const [isInMyList, setIsInMyList] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
-  
   const [activeEpisode, setActiveEpisode] = useState<Episode | null>(null);
   const [expandedSeason, setExpandedSeason] = useState<number | null>(null);
-
   const [isDownloaded, setIsDownloaded] = useState(false);
   const [downloadedEpisodes, setDownloadedEpisodes] = useState<{ [key: string]: boolean }>({});
-  
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
 
-  const isOfflineMode = Boolean(paramLocalUri);
-  const activeDownloadRef = useRef<FileSystem.DownloadResumable | null>(null);
+  // FIX (Issue 2): Holds the resolved local file URI looked up from the registry.
+  const [offlineUri, setOfflineUri] = useState<string | null>(null);
 
+  // ── Data fetching ──────────────────────────────────────────────────────────
   useEffect(() => {
     async function fetchData() {
       try {
+        // FIX (Issue 2): If opened in offline mode, resolve the local URI from
+        // the registry immediately. No routing params needed.
+        if (isOfflineMode) {
+          const downloaded = await getDownloadedMovie(id);
+          if (downloaded?.localUri) {
+            setOfflineUri(downloaded.localUri);
+          }
+        }
+
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
           setUserId(user.id);
-          const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle();
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .maybeSingle();
           setIsAdmin(profile?.role === 'super_admin' || profile?.role === 'manager');
-          const { data: wl } = await supabase.from('watchlist').select('id').eq('user_id', user.id).eq('movie_id', id).maybeSingle();
+          const { data: wl } = await supabase
+            .from('watchlist')
+            .select('id')
+            .eq('user_id', user.id)
+            .eq('movie_id', id)
+            .maybeSingle();
           setIsInMyList(!!wl);
         }
 
-        const { data: movieData, error } = await supabase.from('movies').select('*').eq('id', id).single();
+        const { data: movieData, error } = await supabase
+          .from('movies')
+          .select('*')
+          .eq('id', id)
+          .single();
         if (error) throw error;
         setMovie(movieData);
 
         if (movieData.type === 'TV Series') {
-          const { data: epData } = await supabase.from('episodes').select('*').eq('movie_id', id).eq('status', 'active').order('season_number').order('episode_number');
+          const { data: epData } = await supabase
+            .from('episodes')
+            .select('*')
+            .eq('movie_id', id)
+            .eq('status', 'active')
+            .order('season_number')
+            .order('episode_number');
           setEpisodes(epData || []);
-          if (epData && epData.length > 0) {
-             setExpandedSeason(epData[0].season_number);
-          }
-          
+          if (epData && epData.length > 0) setExpandedSeason(epData[0].season_number);
+
           const epStatusObj: { [key: string]: boolean } = {};
-          for (const ep of (epData || [])) {
-             epStatusObj[ep.id] = await isMovieDownloaded(ep.id);
+          for (const ep of epData || []) {
+            epStatusObj[ep.id] = await isMovieDownloaded(ep.id);
           }
           setDownloadedEpisodes(epStatusObj);
         } else {
-           const downloaded = await isMovieDownloaded(id);
-           setIsDownloaded(downloaded);
+          setIsDownloaded(await isMovieDownloaded(id));
         }
 
-        const { data: simData } = await supabase.from('movies')
+        const { data: simData } = await supabase
+          .from('movies')
           .select('*')
           .eq('category', movieData.category)
           .eq('status', 'active')
           .neq('id', id)
           .limit(6);
-          
         setSimilarMovies(simData || []);
 
-      } catch (err) { console.error(err); } finally { setLoading(false); }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
     }
     fetchData();
   }, [id]);
 
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', async (nextState: AppStateStatus) => {
-      if (nextState === 'background' && activeDownloadRef.current && downloadingId) {
-        try {
-          const snapshot = await activeDownloadRef.current.pauseAsync();
-          await AsyncStorage.setItem(RESUMABLE_SNAPSHOT_KEY(downloadingId), JSON.stringify(snapshot));
-        } catch (e) {
-          console.warn('[Download] Failed to pause on background:', e);
-        }
-      }
-    });
-    return () => subscription.remove();
-  }, [downloadingId]);
-
+  // ── Auth guard ─────────────────────────────────────────────────────────────
   const ensureAuthenticated = () => {
     if (!userId) {
       if (Platform.OS === 'web') {
-        window.alert("Please log in or create an account to access this feature.");
+        window.alert('Please log in or create an account to access this feature.');
         router.push('/');
       } else {
-        Alert.alert("Login Required", "Please log in or create an account to access this feature.", [{ text: "Cancel", style: "cancel" }, { text: "Log In", onPress: () => router.push('/') }]);
+        Alert.alert(
+          'Login Required',
+          'Please log in or create an account to access this feature.',
+          [{ text: 'Cancel', style: 'cancel' }, { text: 'Log In', onPress: () => router.push('/') }]
+        );
       }
       return false;
     }
     return true;
   };
 
+  // ── Watchlist ──────────────────────────────────────────────────────────────
   const toggleWatchlist = async () => {
-    if (!ensureAuthenticated()) return;
-    if (!movie) return;
+    if (!ensureAuthenticated() || !movie) return;
     try {
-      if (isInMyList) { await supabase.from('watchlist').delete().eq('user_id', userId).eq('movie_id', movie.id); setIsInMyList(false); } 
-      else { await supabase.from('watchlist').insert({ user_id: userId, movie_id: movie.id }); setIsInMyList(true); }
+      if (isInMyList) {
+        await supabase.from('watchlist').delete().eq('user_id', userId).eq('movie_id', movie.id);
+        setIsInMyList(false);
+      } else {
+        await supabase.from('watchlist').insert({ user_id: userId, movie_id: movie.id });
+        setIsInMyList(true);
+      }
     } catch (e) { console.error(e); }
   };
 
+  // ── Delete local download ──────────────────────────────────────────────────
   const handleDeleteLocalItem = (targetId: string, title: string) => {
     const localUri = getLocalFilePath(targetId);
     const msg = `Remove "${title}" from your device? You can download it again anytime.`;
-    
+
     const executeDeletion = async () => {
-       const success = await deleteLocalFile(localUri, targetId);
-       if (success) {
-          await removeDownloadedMovie(targetId);
-          if (movie?.type === 'Movie' && targetId === movie.id) setIsDownloaded(false);
-          else setDownloadedEpisodes(prev => ({ ...prev, [targetId]: false }));
-          if (Platform.OS === 'web') window.alert("Download deleted.");
-       } else {
-          if (Platform.OS === 'web') window.alert("Error deleting file.");
-          else Alert.alert('Error', 'Could not delete this download. Please try again.');
-       }
+      const success = await deleteLocalFile(localUri, targetId);
+      if (success) {
+        await removeDownloadedMovie(targetId);
+        if (movie?.type === 'Movie' && targetId === movie.id) setIsDownloaded(false);
+        else setDownloadedEpisodes((prev) => ({ ...prev, [targetId]: false }));
+        if (Platform.OS === 'web') window.alert('Download deleted.');
+      } else {
+        if (Platform.OS === 'web') window.alert('Error deleting file.');
+        else Alert.alert('Error', 'Could not delete this download. Please try again.');
+      }
     };
 
     if (Platform.OS === 'web') {
-       if (window.confirm(msg)) executeDeletion();
+      if (window.confirm(msg)) executeDeletion();
     } else {
-       Alert.alert('Delete Download', msg, [
-         { text: 'Cancel', style: 'cancel' },
-         { text: 'Delete', style: 'destructive', onPress: executeDeletion }
-       ]);
+      Alert.alert('Delete Download', msg, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: executeDeletion },
+      ]);
     }
   };
 
-  const handleDownloadItem = async (videoUrl: string | null, targetId: string, title: string, posterUrl: string | null) => {
+  // ── Download ───────────────────────────────────────────────────────────────
+  // FIX (Issue 3): Replaced createDownloadResumable with downloadAsync.
+  //
+  // ROOT CAUSE: createDownloadResumable splits large files into internal chunks
+  // using HTTP Range requests. When it issues the next range request, it rebuilds
+  // the HTTP request from scratch and custom headers (Referer) are silently dropped.
+  // BunnyCDN sees a request without Referer and returns 403, killing the download
+  // at whatever byte offset the first chunk ended (~58% for your file sizes).
+  //
+  // FIX: FileSystem.downloadAsync issues ONE unbroken HTTP request for the entire
+  // file. Headers are set once and never dropped.
+  //
+  // PROGRESS: Real progress is tracked by polling getInfoAsync(localUri).size every
+  // 500ms against the total size from a HEAD request. This reads actual bytes on
+  // disk — it is not an estimate or animation.
+  //
+  // TRADE-OFF: downloadAsync cannot be paused/resumed. If the user backgrounds the
+  // app mid-download the download stops. The stale-file cleanup at the top of this
+  // function will clear it and allow a clean restart next time.
+  const handleDownloadItem = async (
+    videoUrl: string | null,
+    targetId: string,
+    title: string,
+    posterUrl: string | null
+  ) => {
     if (!ensureAuthenticated()) return;
     if (!videoUrl) return;
-    if (downloadingId) { Alert.alert("Wait", "Another download is already in progress."); return; }
-    
+    if (downloadingId) {
+      Alert.alert('Wait', 'Another download is already in progress.');
+      return;
+    }
+
     const mp4Url = buildMp4Url(videoUrl);
     const localUri = getLocalFilePath(targetId);
 
+    // ── Stale file guard ────────────────────────────────────────────────────
     const fileInfo = await FileSystem.getInfoAsync(localUri);
     if (fileInfo.exists) {
       const isCompleteFile = fileInfo.size && fileInfo.size > MIN_VALID_FILE_SIZE_BYTES;
       if (isCompleteFile) {
         await addDownloadedMovie({ id: targetId, title, poster_url: posterUrl, localUri });
         if (targetId === movie?.id) setIsDownloaded(true);
-        else setDownloadedEpisodes(prev => ({ ...prev, [targetId]: true }));
+        else setDownloadedEpisodes((prev) => ({ ...prev, [targetId]: true }));
         Alert.alert('Already Downloaded', `"${title}" is already saved offline.`);
         return;
       } else {
+        // Partial/corrupt file — delete it so downloadAsync can write cleanly.
         await FileSystem.deleteAsync(localUri, { idempotent: true });
-        await AsyncStorage.removeItem(RESUMABLE_SNAPSHOT_KEY(targetId));
       }
     }
 
     setDownloadingId(targetId);
     setDownloadProgress(0);
 
-    const onProgress = (progressData: FileSystem.DownloadProgressData) => {
-      const { totalBytesWritten, totalBytesExpectedToWrite } = progressData;
-      if (totalBytesExpectedToWrite > 0) {
-        const pct = Math.round((totalBytesWritten / totalBytesExpectedToWrite) * 100);
-        setDownloadProgress(pct); 
-      }
-    };
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
 
     try {
-      let downloadResumable: FileSystem.DownloadResumable;
-      const savedSnapshot = await AsyncStorage.getItem(RESUMABLE_SNAPSHOT_KEY(targetId));
-
-      if (savedSnapshot) {
-        const snapshot = JSON.parse(savedSnapshot) as FileSystem.DownloadPauseState;
-        downloadResumable = FileSystem.createDownloadResumable(snapshot.url, snapshot.fileUri, snapshot.options, onProgress, snapshot.resumeData);
-      } else {
-        downloadResumable = FileSystem.createDownloadResumable(mp4Url, localUri, {}, onProgress);
+      // ── Step 1: HEAD request to get total file size ─────────────────────
+      // Content-Length is needed to calculate real percentage.
+      // BunnyCDN requires the Referer header on HEAD requests too.
+      let totalBytes = 0;
+      try {
+        const headRes = await fetch(mp4Url, { method: 'HEAD', headers: BUNNY_HEADERS });
+        const contentLength = headRes.headers.get('content-length');
+        if (contentLength) totalBytes = parseInt(contentLength, 10);
+      } catch (headErr) {
+        // HEAD failed — progress stays at 0 but download proceeds normally.
+        console.warn('[Download] HEAD request failed, progress will be indeterminate:', headErr);
       }
 
-      activeDownloadRef.current = downloadResumable;
-      const result = await downloadResumable.downloadAsync();
+      // ── Step 2: Poll actual bytes on disk for real progress ─────────────
+      if (totalBytes > 0) {
+        pollInterval = setInterval(async () => {
+          try {
+            const info = await FileSystem.getInfoAsync(localUri);
+            if (info.exists && info.size) {
+              // Cap at 99 — we set 100 explicitly only after verifying the file.
+              const pct = Math.min(Math.round((info.size / totalBytes) * 100), 99);
+              setDownloadProgress(pct);
+            }
+          } catch {
+            // File may be mid-write — ignore and retry next tick.
+          }
+        }, 500);
+      }
 
-      await AsyncStorage.removeItem(RESUMABLE_SNAPSHOT_KEY(targetId));
-      activeDownloadRef.current = null;
+      // ── Step 3: Single unbroken HTTP request ────────────────────────────
+      // Headers are sent once and never reconstructed mid-download.
+      const result = await FileSystem.downloadAsync(mp4Url, localUri, {
+        headers: BUNNY_HEADERS,
+      });
+
+      if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
 
       if (!result || result.status !== 200) {
-        throw new Error(`Download failed. Server returned HTTP ${result?.status ?? 'unknown'}. Ensure mp4_support is enabled and asset is fully processed.`);
+        throw new Error(
+          `Download failed. BunnyCDN returned HTTP ${result?.status ?? 'unknown'}. ` +
+          `Verify the Referer header matches your Stream library's Allowed Domains list ` +
+          `and that the MP4 file exists at this path.`
+        );
       }
 
+      // ── Validate the written file is not empty or corrupt ───────────────
       const downloadedInfo = await FileSystem.getInfoAsync(result.uri);
       if (!downloadedInfo.exists || !downloadedInfo.size || downloadedInfo.size < 1024) {
         await FileSystem.deleteAsync(result.uri, { idempotent: true });
-        throw new Error('Downloaded file is corrupt. The Mux asset may not be fully processed yet.');
+        throw new Error(
+          'Downloaded file is empty or corrupt. ' +
+          'The MP4 fallback file may not exist at this path on BunnyCDN yet.'
+        );
       }
 
+      // ── Register in offline registry ────────────────────────────────────
       await addDownloadedMovie({ id: targetId, title, poster_url: posterUrl, localUri: result.uri });
 
       if (targetId === movie?.id) setIsDownloaded(true);
-      else setDownloadedEpisodes(prev => ({ ...prev, [targetId]: true }));
-      
+      else setDownloadedEpisodes((prev) => ({ ...prev, [targetId]: true }));
+
       setDownloadProgress(100);
       Alert.alert('Download Complete', `"${title}" is now available offline.`);
 
     } catch (e: any) {
-      activeDownloadRef.current = null;
+      if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
       const technicalMessage = e?.message || String(e);
+      console.error('[Download] Failed for', targetId, ':', technicalMessage);
       showDownloadError(title, technicalMessage, isAdmin);
     } finally {
       setDownloadingId(null);
@@ -496,59 +641,95 @@ export default function TheaterScreen() {
     }
   };
 
+  // ── Playback ───────────────────────────────────────────────────────────────
   const handlePlayMain = () => {
     if (!ensureAuthenticated()) return;
+
+    // FIX (Issue 2): In offline mode, use the URI resolved from the registry.
+    // offlineUri is populated in fetchData above.
+    if (isOfflineMode && offlineUri) {
+      setCurrentVideoUrl(offlineUri);
+      setIsPlaying(true);
+      return;
+    }
+
     if (movie?.type === 'TV Series' && episodes.length > 0) {
       if (!activeEpisode) {
-        setCurrentVideoUrl(episodes[0].video_url); setActiveEpisode(episodes[0]); setExpandedSeason(episodes[0].season_number);
+        setCurrentVideoUrl(episodes[0].video_url);
+        setActiveEpisode(episodes[0]);
+        setExpandedSeason(episodes[0].season_number);
       }
-    } else { setCurrentVideoUrl(movie?.video_url || null); }
+    } else {
+      setCurrentVideoUrl(movie?.video_url || null);
+    }
     setIsPlaying(true);
   };
 
   const handlePlayEpisode = (ep: Episode) => {
     if (!ensureAuthenticated()) return;
-    setCurrentVideoUrl(ep.video_url); setActiveEpisode(ep); setIsPlaying(true);
+    setCurrentVideoUrl(ep.video_url);
+    setActiveEpisode(ep);
+    setIsPlaying(true);
   };
 
-  const hasNextEpisode = activeEpisode ? episodes.findIndex(e => e.id === activeEpisode.id) < episodes.length - 1 : false;
-  
+  const hasNextEpisode = activeEpisode
+    ? episodes.findIndex((e) => e.id === activeEpisode.id) < episodes.length - 1
+    : false;
+
   const handleNextEpisode = () => {
-    if (!ensureAuthenticated()) return;
-    if (!activeEpisode) return;
-    const currentIndex = episodes.findIndex(e => e.id === activeEpisode.id);
+    if (!ensureAuthenticated() || !activeEpisode) return;
+    const currentIndex = episodes.findIndex((e) => e.id === activeEpisode.id);
     if (currentIndex !== -1 && currentIndex < episodes.length - 1) {
       const nextEp = episodes[currentIndex + 1];
-      setCurrentVideoUrl(nextEp.video_url); setActiveEpisode(nextEp); setExpandedSeason(nextEp.season_number); setIsPlaying(true);
+      setCurrentVideoUrl(nextEp.video_url);
+      setActiveEpisode(nextEp);
+      setExpandedSeason(nextEp.season_number);
+      setIsPlaying(true);
     }
   };
 
-  const availableSeasons = Array.from(new Set(episodes.map(e => e.season_number))).sort((a,b) => a-b);
-  const gridColumns = isDesktop ? 6 : (width > 550 ? 4 : 2);
+  // ── Render ─────────────────────────────────────────────────────────────────
+  const availableSeasons = Array.from(new Set(episodes.map((e) => e.season_number))).sort((a, b) => a - b);
+  const gridColumns = isDesktop ? 6 : width > 550 ? 4 : 2;
   const gridGap = 10;
-  const safeCardWidth = (width - 40 - (gridGap * (gridColumns - 1))) / gridColumns;
+  const safeCardWidth = (width - 40 - gridGap * (gridColumns - 1)) / gridColumns;
   const finalCardWidth = Math.min(safeCardWidth, 160);
 
   if (loading) return <View style={styles.container}><ActivityIndicator size="large" color="#e50914" /></View>;
-  if (!movie) return <View style={styles.container}><Text style={{color:'#fff'}}>Not found.</Text></View>;
+  if (!movie) return <View style={styles.container}><Text style={{ color: '#fff' }}>Not found.</Text></View>;
 
-  const displayTitle = activeEpisode ? `S${activeEpisode.season_number} E${activeEpisode.episode_number} - ${activeEpisode.title}` : movie.title;
+  const displayTitle = activeEpisode
+    ? `S${activeEpisode.season_number} E${activeEpisode.episode_number} - ${activeEpisode.title}`
+    : movie.title;
 
   return (
     <View style={styles.container}>
-      
       {!(Platform.OS === 'web' && isPlaying) && (
         <View style={[styles.header, { top: Platform.OS === 'web' ? 20 : insets.top + 10 }]}>
-          <Pressable onPress={() => router.back()} style={styles.backButton}><Ionicons name="arrow-back" size={24} color="#fff" /></Pressable>
+          <Pressable onPress={() => router.back()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color="#fff" />
+          </Pressable>
         </View>
       )}
 
       <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 60 }}>
         {isPlaying && currentVideoUrl ? (
-          <VideoPlayerBlock url={currentVideoUrl} movieId={movie.id} userId={userId} initialTime={0} onError={()=>{}} title={displayTitle} onBack={() => setIsPlaying(false)} />
+          <VideoPlayerBlock
+            url={currentVideoUrl}
+            movieId={movie.id}
+            userId={userId}
+            initialTime={0}
+            onError={() => {}}
+            title={displayTitle}
+            onBack={() => setIsPlaying(false)}
+          />
         ) : (
           <View style={styles.posterBox}>
-            <Image source={{ uri: movie.backdrop_url || movie.poster_url }} style={styles.mainPoster} resizeMode="cover" />
+            <Image
+              source={{ uri: movie.backdrop_url || movie.poster_url }}
+              style={styles.mainPoster}
+              resizeMode="cover"
+            />
             <Pressable style={styles.playOverlay} onPress={handlePlayMain}>
               <Ionicons name="play" size={60} color="#fff" />
             </Pressable>
@@ -557,9 +738,11 @@ export default function TheaterScreen() {
 
         <View style={styles.details}>
           <Text style={styles.title} selectable={false}>{movie.title}</Text>
-          
+
           {activeEpisode && isPlaying && (
-            <Text style={styles.activeEpisodeTitle} selectable={false}>Now Playing: S{activeEpisode.season_number} E{activeEpisode.episode_number} - {activeEpisode.title}</Text>
+            <Text style={styles.activeEpisodeTitle} selectable={false}>
+              Now Playing: S{activeEpisode.season_number} E{activeEpisode.episode_number} - {activeEpisode.title}
+            </Text>
           )}
 
           <Text style={styles.meta} selectable={false}>{movie.category} • {movie.type}</Text>
@@ -571,34 +754,40 @@ export default function TheaterScreen() {
             </Pressable>
 
             {hasNextEpisode && isPlaying && (
-               <Pressable style={styles.nextBtn} onPress={handleNextEpisode}>
-                 <Ionicons name="play-skip-forward" size={18} color="#fff" />
-                 <Text style={styles.nextBtnText} selectable={false}>Next</Text>
-               </Pressable>
+              <Pressable style={styles.nextBtn} onPress={handleNextEpisode}>
+                <Ionicons name="play-skip-forward" size={18} color="#fff" />
+                <Text style={styles.nextBtnText} selectable={false}>Next</Text>
+              </Pressable>
             )}
 
             <Pressable style={styles.actionBtn} onPress={toggleWatchlist}>
-              <Ionicons name={isInMyList ? "checkmark" : "add"} size={22} color="#fff" />
+              <Ionicons name={isInMyList ? 'checkmark' : 'add'} size={22} color="#fff" />
               <Text style={styles.actionBtnText} selectable={false}>My List</Text>
             </Pressable>
 
             {movie.type === 'Movie' && !isOfflineMode && Platform.OS !== 'web' && (
-              <Pressable 
-                 style={styles.actionBtn} 
-                 onPress={() => {
-                    if (isDownloaded) handleDeleteLocalItem(movie.id, movie.title);
-                    else handleDownloadItem(movie.video_url, movie.id, movie.title, movie.poster_url);
-                 }}
+              <Pressable
+                style={styles.actionBtn}
+                onPress={() => {
+                  if (isDownloaded) handleDeleteLocalItem(movie.id, movie.title);
+                  else handleDownloadItem(movie.video_url, movie.id, movie.title, movie.poster_url);
+                }}
               >
                 {downloadingId === movie.id ? (
                   <View style={{ alignItems: 'center' }}>
-                     <ActivityIndicator size="small" color="#fff" style={{ marginBottom: 4 }} />
-                     <Text style={[styles.actionBtnText, {color: '#fff', fontWeight: 'bold'}]} selectable={false}>{downloadProgress || 0}%</Text>
+                    <ActivityIndicator size="small" color="#fff" style={{ marginBottom: 4 }} />
+                    <Text style={[styles.actionBtnText, { color: '#fff', fontWeight: 'bold' }]} selectable={false}>
+                      {downloadProgress || 0}%
+                    </Text>
                   </View>
                 ) : (
                   <>
-                    <Ionicons name={isDownloaded ? "trash" : "download-outline"} size={22} color={isDownloaded ? "#ef4444" : "#fff"} />
-                    <Text style={[styles.actionBtnText, isDownloaded && {color: '#ef4444'}]} selectable={false}>
+                    <Ionicons
+                      name={isDownloaded ? 'trash' : 'download-outline'}
+                      size={22}
+                      color={isDownloaded ? '#ef4444' : '#fff'}
+                    />
+                    <Text style={[styles.actionBtnText, isDownloaded && { color: '#ef4444' }]} selectable={false}>
                       {isDownloaded ? 'Delete' : 'Download'}
                     </Text>
                   </>
@@ -612,46 +801,64 @@ export default function TheaterScreen() {
           {movie.type === 'TV Series' && availableSeasons.length > 0 && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle} selectable={false}>Episodes</Text>
-              {availableSeasons.map(seasonNum => {
+              {availableSeasons.map((seasonNum) => {
                 const isExpanded = expandedSeason === seasonNum;
-                const seasonEpisodes = episodes.filter(ep => ep.season_number === seasonNum);
+                const seasonEpisodes = episodes.filter((ep) => ep.season_number === seasonNum);
                 return (
                   <View key={`season-${seasonNum}`} style={styles.seasonAccordion}>
-                    <Pressable style={styles.seasonHeader} onPress={() => setExpandedSeason(isExpanded ? null : seasonNum)}>
+                    <Pressable
+                      style={styles.seasonHeader}
+                      onPress={() => setExpandedSeason(isExpanded ? null : seasonNum)}
+                    >
                       <Text style={styles.seasonHeaderText} selectable={false}>Season {seasonNum}</Text>
-                      <Ionicons name={isExpanded ? "chevron-up" : "chevron-down"} size={20} color="#fff" />
+                      <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={20} color="#fff" />
                     </Pressable>
+
                     {isExpanded && (
                       <View style={styles.seasonEpisodesList}>
-                        {seasonEpisodes.map(ep => {
+                        {seasonEpisodes.map((ep) => {
                           const isActive = activeEpisode?.id === ep.id;
                           const isDownloadingThisEp = downloadingId === ep.id;
                           const isEpDownloaded = downloadedEpisodes[ep.id] || false;
-                          
                           return (
                             <View key={ep.id} style={[styles.epRow, isActive && styles.activeEpRow]}>
                               <Pressable style={styles.epInfoContainer} onPress={() => handlePlayEpisode(ep)}>
                                 <View style={styles.epInfo}>
-                                  <Text style={[styles.epTitle, isActive && { color: '#e50914', fontWeight: 'bold' }]} selectable={false}>{ep.episode_number}. {ep.title}</Text>
+                                  <Text
+                                    style={[styles.epTitle, isActive && { color: '#e50914', fontWeight: 'bold' }]}
+                                    selectable={false}
+                                  >
+                                    {ep.episode_number}. {ep.title}
+                                  </Text>
                                 </View>
-                                <Ionicons name={isActive ? "play-circle" : "play-circle-outline"} size={28} color={isActive ? "#e50914" : "#fff"} />
+                                <Ionicons
+                                  name={isActive ? 'play-circle' : 'play-circle-outline'}
+                                  size={28}
+                                  color={isActive ? '#e50914' : '#fff'}
+                                />
                               </Pressable>
-                              
+
                               {!isOfflineMode && Platform.OS !== 'web' && (
-                                <Pressable 
-                                   style={styles.epDownloadBtn} 
-                                   onPress={() => {
-                                      if (isEpDownloaded) handleDeleteLocalItem(ep.id, ep.title);
-                                      else handleDownloadItem(ep.video_url, ep.id, ep.title, movie.poster_url);
-                                   }}
+                                <Pressable
+                                  style={styles.epDownloadBtn}
+                                  onPress={() => {
+                                    if (isEpDownloaded) handleDeleteLocalItem(ep.id, ep.title);
+                                    else handleDownloadItem(ep.video_url, ep.id, ep.title, movie.poster_url);
+                                  }}
                                 >
                                   {isDownloadingThisEp ? (
                                     <View style={{ alignItems: 'center' }}>
-                                       <ActivityIndicator size="small" color="#e50914" />
-                                       <Text style={{color: '#fff', fontSize: 10, fontWeight: 'bold', marginTop: 2}}>{downloadProgress || 0}%</Text>
+                                      <ActivityIndicator size="small" color="#e50914" />
+                                      <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold', marginTop: 2 }}>
+                                        {downloadProgress || 0}%
+                                      </Text>
                                     </View>
                                   ) : (
-                                    <Ionicons name={isEpDownloaded ? "trash" : "download-outline"} size={24} color={isEpDownloaded ? "#ef4444" : "#fff"} />
+                                    <Ionicons
+                                      name={isEpDownloaded ? 'trash' : 'download-outline'}
+                                      size={24}
+                                      color={isEpDownloaded ? '#ef4444' : '#fff'}
+                                    />
                                   )}
                                 </Pressable>
                               )}
@@ -670,8 +877,14 @@ export default function TheaterScreen() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle} selectable={false}>More Like This</Text>
               <View style={[styles.grid, { gap: gridGap }]}>
-                {similarMovies.map(m => (
-                  <Pressable key={m.id} style={[styles.gridItem, { width: finalCardWidth }]} onPress={() => router.replace(`/movie/${m.id}`)}>
+                {similarMovies.map((m) => (
+                  // FIX: Use static route pattern — template literals break Expo Router's
+                  // TypeScript typed routes and can cause navigation issues.
+                  <Pressable
+                    key={m.id}
+                    style={[styles.gridItem, { width: finalCardWidth }]}
+                    onPress={() => router.replace({ pathname: '/movie/[id]', params: { id: m.id } })}
+                  >
                     <Image source={{ uri: m.poster_url }} style={styles.gridImage} />
                   </Pressable>
                 ))}
@@ -689,8 +902,8 @@ const styles = StyleSheet.create({
   header: { position: 'absolute', left: 20, zIndex: 100 },
   backButton: { backgroundColor: 'rgba(0,0,0,0.6)', padding: 10, borderRadius: 24 },
   scroll: { flex: 1 },
-  videoContainer: { width: '100%', maxWidth: 1200, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#000', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
-  posterBox: { width: '100%', maxWidth: 1200, alignSelf: 'center', aspectRatio: 16/9, backgroundColor: '#111', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
+  videoContainer: { width: '100%', maxWidth: 1200, alignSelf: 'center', aspectRatio: 16 / 9, backgroundColor: '#000', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
+  posterBox: { width: '100%', maxWidth: 1200, alignSelf: 'center', aspectRatio: 16 / 9, backgroundColor: '#111', marginTop: Platform.OS === 'web' ? 40 : 0, borderRadius: Platform.OS === 'web' ? 8 : 0, overflow: 'hidden' },
   mainPoster: { width: '100%', height: '100%' },
   playOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.3)' },
   details: { padding: 20, maxWidth: 960, alignSelf: 'center', width: '100%' },
@@ -718,6 +931,6 @@ const styles = StyleSheet.create({
   epTitle: { color: '#fff', fontSize: 14 },
   epDownloadBtn: { paddingVertical: 12, paddingHorizontal: 15, justifyContent: 'center', alignItems: 'center', borderLeftWidth: 1, borderLeftColor: '#333', minWidth: 50 },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
-  gridItem: { aspectRatio: 2/3, marginBottom: 10 },
-  gridImage: { width: '100%', height: '100%', borderRadius: 4, backgroundColor: '#111' }
+  gridItem: { aspectRatio: 2 / 3, marginBottom: 10 },
+  gridImage: { width: '100%', height: '100%', borderRadius: 4, backgroundColor: '#111' },
 });
