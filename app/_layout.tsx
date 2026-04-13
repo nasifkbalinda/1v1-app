@@ -1,9 +1,10 @@
 import { supabase } from '@/lib/supabase';
+import { Ionicons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Platform, View } from 'react-native'; // ---> Added Platform here <---
 
 // Keep the splash screen visible while everything loads
 SplashScreen.preventAutoHideAsync();
@@ -12,10 +13,18 @@ export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
   
-  // 1. FONT LOADING LOGIC (Web-Safe Fix: Forces the web bundler to pull from node_modules)
-  const [fontsLoaded, fontError] = useFonts({
-    Ionicons: require('@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf'),
-  });
+  // 1. FONT LOADING LOGIC (The Ultimate Web/Android Split)
+  const fontsToLoad: any = {
+    ...Ionicons.font,
+  };
+
+  // Only on the web, fetch the font directly from the public folder's URL.
+  // Because it is a string URL, the Android compiler ignores it and doesn't crash!
+  if (Platform.OS === 'web') {
+    fontsToLoad['Ionicons'] = '/fonts/Ionicons.ttf';
+  }
+
+  const [fontsLoaded, fontError] = useFonts(fontsToLoad);
 
   // 2. AUTH SESSION LOGIC
   const [authLoading, setAuthLoading] = useState(true);
@@ -39,7 +48,6 @@ export default function RootLayout() {
       setAuthLoading(false);
       
       // --- HEARTBEAT ON STATE CHANGE ---
-      // This makes your DAU / WAU / MAU stats work in the admin dashboard!
       if (session?.user) {
         supabase.from('profiles').update({ last_active: new Date().toISOString() }).eq('id', session.user.id).then();
       }
@@ -48,7 +56,7 @@ export default function RootLayout() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 3. NAVIGATION GUARD (Updated to allow /movie/ screen)
+  // 3. NAVIGATION GUARD
   useEffect(() => {
     if (authLoading || !fontsLoaded) return;
 
