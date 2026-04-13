@@ -1,5 +1,4 @@
 import { supabase } from '@/lib/supabase';
-import { Ionicons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -13,9 +12,9 @@ export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
   
-  // 1. FONT LOADING LOGIC (UPDATED: Removed the manual public folder requirement)
+  // 1. FONT LOADING LOGIC (Web-Safe Fix: Forces the web bundler to pull from node_modules)
   const [fontsLoaded, fontError] = useFonts({
-    ...Ionicons.font,
+    Ionicons: require('@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf'),
   });
 
   // 2. AUTH SESSION LOGIC
