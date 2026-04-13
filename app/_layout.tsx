@@ -4,11 +4,7 @@ import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
-
-// ---> 1. THE ES6 ASSET IMPORT FIX <---
-// This forces Expo's bundler to extract the font and safely serve it on both Web and Android.
-import IoniconsTTF from '@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf';
+import { ActivityIndicator, Platform, View } from 'react-native';
 
 // Keep the splash screen visible while everything loads
 SplashScreen.preventAutoHideAsync();
@@ -17,11 +13,14 @@ export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
   
-  // ---> 2. LOAD THE BUNDLED FONT <---
-  const [fontsLoaded, fontError] = useFonts({
-    ...Ionicons.font,
-    Ionicons: IoniconsTTF,
-  });
+  // ---> THE TRUE HYBRID FONT LOADER <---
+  // On Web: We bypass Cloudflare entirely and feed a remote CDN URL directly into Expo.
+  // On Android: We use the default local Ionicons font that we know works perfectly.
+  const fontToLoad = Platform.OS === 'web' 
+    ? { Ionicons: 'https://unpkg.com/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf' }
+    : Ionicons.font;
+
+  const [fontsLoaded, fontError] = useFonts(fontToLoad);
 
   // 3. AUTH SESSION LOGIC
   const [authLoading, setAuthLoading] = useState(true);
