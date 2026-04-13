@@ -13,10 +13,9 @@ export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
   
-  // 1. FONT LOADING LOGIC
+  // 1. FONT LOADING LOGIC (UPDATED: Removed the manual public folder requirement)
   const [fontsLoaded, fontError] = useFonts({
     ...Ionicons.font,
-    'Ionicons': require('../public/fonts/Ionicons.ttf'),
   });
 
   // 2. AUTH SESSION LOGIC
