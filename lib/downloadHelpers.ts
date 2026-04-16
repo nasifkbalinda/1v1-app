@@ -18,7 +18,8 @@ export function buildMp4Url(videoUrl: string): string {
     }
     
     // 2. Handle New Bunny Stream Links
-    if (parsed.hostname.includes('b-cdn.net')) {
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'b-cdn.net' || host.endsWith('.b-cdn.net')) {
       // Bunny generates specific resolution files when MP4 Fallback is enabled.
       // We default to 720p as it is the perfect balance of high quality and decent file size for mobile.
       const cleanPath = parsed.pathname.replace(/\/playlist\.m3u8$/, '');
