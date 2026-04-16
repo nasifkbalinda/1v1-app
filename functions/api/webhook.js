@@ -1,13 +1,22 @@
 import { createClient } from '@supabase/supabase-js';
 
 export async function onRequestPost(context) {
-  const { request } = context;
+  // Extract both the request and the secure environment variables from Cloudflare's context
+  const { request, env } = context;
 
-  // ---> YOUR SECURE KEYS GO HERE <---
-  // We need the SERVICE_ROLE key here so the backend can bypass security and update the database automatically.
+  // The URL is public, so it is safe to hardcode. 
   const SUPABASE_URL = 'https://acmslndavkvavlacdzst.supabase.co';
-  const SUPABASE_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjbXNsbmRhdmt2YXZsYWNkenN0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjMxNjQ0OSwiZXhwIjoyMDg3ODkyNDQ5fQ.fAfIfDHyQFqo4scsIbtUWBwUhGVLglUU34a_6pZsWwE'; // PASTE YOUR FULL SERVICE KEY HERE
   
+  // ---> THE SECURE FIX <---
+  // The service key is now pulled securely from Cloudflare's hidden vault!
+  const SUPABASE_SERVICE_KEY = env.SUPABASE_SERVICE_KEY;
+  
+  // Failsafe: Prevent the client from crashing if the key is missing in Cloudflare settings
+  if (!SUPABASE_SERVICE_KEY) {
+    console.error("Missing SUPABASE_SERVICE_KEY in Cloudflare Environment Variables");
+    return new Response("Server configuration error", { status: 500 });
+  }
+
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
   try {
