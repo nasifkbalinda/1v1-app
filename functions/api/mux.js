@@ -12,11 +12,12 @@ export async function onRequest(context) {
     });
   }
 
-  // ---> GRAB KEYS FROM CLOUDFLARE ENVIRNOMENT <---
+  // ---> GRAB KEYS FROM CLOUDFLARE ENVIRONMENT <---
+  // These now perfectly match your updated Cloudflare Dashboard variables
   const BUNNY_LIBRARY_ID = env.BUNNY_LIBRARY_ID;
   const BUNNY_API_KEY = env.BUNNY_API_KEY;
-  const SUPABASE_URL = env.VITE_SUPABASE_URL;
-  const SUPABASE_ANON_KEY = env.VITE_SUPABASE_ANON_KEY;
+  const SUPABASE_URL = env.EXPO_PUBLIC_SUPABASE_URL;
+  const SUPABASE_ANON_KEY = env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
   if (request.method === 'POST') {
     // 2. Extract Token
